@@ -1,175 +1,60 @@
 ## `gnnmath::vector` – Vector Operations for GNN-based 3D Mesh Simplification
 
-The `gnnmath::vector` namespace in the **MeshGNN** project provides mathematical operations for vectors, specifically tailored for **Graph Neural Network (GNN)** applications in **3D mesh simplification**. It supports computations on node and edge feature vectors, enabling feature transformations and edge scoring in GNNs using the C++17 standard library.
-
----
+The `gnnmath::vector` namespace provides operations for vectors used in GNNs, such as node and edge feature transformations.
 
 ### 📦 Overview
 
-* Operates on vectors represented as sequences of real numbers (`double`).
-* Includes vector arithmetic, inner products, norms, and activation functions.
-* Implements **parallelized** operations and **numerical stability** checks.
-
----
+- Operates on real-valued vectors (`double`)
+- Supports:
+  - Vector arithmetic (add, sub, dot)
+  - Norms (L2)
+  - Activation functions (ReLU, Sigmoid, Softmax, etc.)
+- Designed for **GNN layers** and **mesh feature processing**
+- Uses parallel algorithms and stability checks
 
 ### 📚 Dependencies
 
-* **C++17** standard library:
-
-  * `<vector>`, `<cmath>`, `<algorithm>`, `<stdexcept>`, `<execution>`
-* ✅ No external libraries required
-
----
+- C++17 standard library: `<vector>`, `<cmath>`, `<algorithm>`, `<stdexcept>`, `<execution>`
+- ✅ No external libraries required
 
 ### 📐 Mathematical Definitions
 
-Given vectors:
+Let \( \mathbf{a} = [a_1, \dots, a_n] \), \( \mathbf{b} = [b_1, \dots, b_n] \):
 
-$$
-\mathbf{a} = [a_1, a_2, \dots, a_n], \quad \mathbf{b} = [b_1, b_2, \dots, b_n]
-$$
+- **Addition**:  
+  \[ \mathbf{a} + \mathbf{b} = [a_1 + b_1, \dots, a_n + b_n] \]
+- **Subtraction**:  
+  \[ \mathbf{a} - \mathbf{b} = [a_1 - b_1, \dots, a_n - b_n] \]
+- **In-place Operations**:  
+  \[ \mathbf{a} \gets \mathbf{a} \pm \mathbf{b} \]
+- **Scalar Multiplication**:  
+  \[ c \cdot \mathbf{a} = [c a_1, \dots, c a_n] \]
+- **Dot Product**:  
+  \[ \mathbf{a} \cdot \mathbf{b} = \sum_{i=1}^n a_i b_i \]
+- **L2 Norm**:  
+  \[ |\mathbf{a}|_2 = \sqrt{\sum_{i=1}^n a_i^2} \]
 
-#### 🔢 Vector Operations
+### 🔁 Activation Functions
 
-* **Vector Addition**
+- **ReLU**: \( 	ext{ReLU}(x) = \max(0, x) \)
+- **Sigmoid**: \( \sigma(x) = rac{1}{1 + e^{-x}} \)
+- **Mish**: \( x \cdot 	anh(\ln(1 + e^x)) \)
+- **Softmax**: \( 	ext{Softmax}(\mathbf{a})_i = rac{e^{a_i}}{\sum_j e^{a_j}} \)
+- **Softplus**: \( \ln(1 + e^x) \)
+- **GELU**: \( x \cdot \Phi(x), \quad \Phi(x) = rac{1}{2}(1 + 	ext{erf}(rac{x}{\sqrt{2}})) \)
+- **SiLU**: \( x \cdot \sigma(x) \)
+- **Softsign**: \( rac{x}{1 + |x|} \)
 
-  $$
-  \mathbf{a} + \mathbf{b} = [a_1 + b_1, a_2 + b_2, \dots, a_n + b_n]
-  $$
+### 🧩 Usage
 
-* **Vector Subtraction**
+Used for:
 
-  $$
-  \mathbf{a} - \mathbf{b} = [a_1 - b_1, a_2 - b_2, \dots, a_n - b_n]
-  $$
+- Node/edge feature transformations
+- Dot products for similarity
+- Feature normalization
+- Edge scoring for simplification
 
-* **In-place Addition/Subtraction**
-
-  $$
-  \mathbf{a} \gets \mathbf{a} + \mathbf{b}, \quad \mathbf{a} \gets \mathbf{a} - \mathbf{b}
-  $$
-
-* **Scalar Multiplication**
-
-  $$
-  c \cdot \mathbf{a} = [c a_1, c a_2, \dots, c a_n]
-  $$
-
-* **Dot Product (Inner Product)**
-
-  $$
-  \mathbf{a} \cdot \mathbf{b} = \sum_{i=1}^n a_i b_i
-  $$
-
-* **Euclidean Norm (L2 Norm)**
-
-  $$
-  \|\mathbf{a}\|_2 = \sqrt{\sum_{i=1}^n a_i^2}
-  $$
-
----
-
-#### 🧠 Activation Functions (Element-wise)
-
-* **ReLU**:
-
-  $$
-  \text{ReLU}(x) = \max(0, x)
-  $$
-
-* **Sigmoid**:
-
-  $$
-  \sigma(x) = \frac{1}{1 + e^{-x}}
-  $$
-
-* **Mish**:
-
-  $$
-  \text{Mish}(x) = x \cdot \tanh(\ln(1 + e^x))
-  $$
-
-* **Softmax**:
-
-  $$
-  \text{Softmax}(\mathbf{a})_i = \frac{e^{a_i}}{\sum_{j=1}^n e^{a_j}}
-  $$
-
-* **Softplus**:
-
-  $$
-  \text{Softplus}(x) = \ln(1 + e^x)
-  $$
-
-* **GELU (Gaussian Error Linear Unit)**:
-
-  $$
-  \text{GELU}(x) = x \cdot \Phi(x), \quad \Phi(x) = \frac{1}{2} \left(1 + \operatorname{erf}\left(\frac{x}{\sqrt{2}}\right)\right)
-  $$
-
-* **SiLU (Sigmoid Linear Unit)**:
-
-  $$
-  \text{SiLU}(x) = x \cdot \sigma(x)
-  $$
-
-* **Softsign**:
-
-  $$
-  \text{Softsign}(x) = \frac{x}{1 + |x|}
-  $$
-
----
-
-### 🧩 Usage in MeshGNN
-
-* Feature transformation in GNN layers (e.g., ReLU, softmax)
-* Dot product for similarity computation
-* Euclidean norm for feature normalization
-* Softmax-based edge scoring in mesh simplification
-
----
-
-### 🛠️ Build & Integration
-
-#### 🔧 Clone the Repository
-
-```bash
-git clone https://github.com/username/MeshGNN.git
-cd MeshGNN
-```
-
-#### 🏗️ Build with CMake
-
-```bash
-mkdir build && cd build
-cmake ..
-make
-```
-
-#### 📌 Include in Your Project
-
-* Add `include/gnnmath` to your include path
-* Link against the `GNNMath` library (static or shared)
-
----
-
-### 📦 Requirements
-
-* C++17-compliant compiler (e.g., **GCC 7+**, **Clang 5+**)
-* **CMake** ≥ 3.10
-
----
-
-### ✅ Testing
-
-Unit tests are available in:
-
-```
-tests/test_vector.cpp
-```
-
-Run them with:
+### 🧪 Testing
 
 ```bash
 cd build
@@ -178,16 +63,102 @@ make test
 
 ---
 
-### 🤝 Contributing
+## `gnnmath::matrix` – Matrix Operations
 
-* Submit issues and pull requests via [MeshGNN repository](https://github.com/buniatyann/MeshGNN).
-* Follow the style in `vector.hpp`.
-* Include unit tests for all new features.
+The `gnnmath::matrix` namespace provides dense and sparse matrix operations, including GNN-relevant graph algorithms.
+
+### 📦 Overview
+
+- Dense matrix (double-based)
+- Sparse CSR matrix (non-zero values, indices, row pointers)
+- Graph-based operations: Adjacency, Laplacian, etc.
+- Optimized for GNN mesh processing
+
+### 📚 Dependencies
+
+- C++17 standard library:  
+  `<vector>`, `<cmath>`, `<algorithm>`, `<stdexcept>`, `<execution>`
+- `gnnmath::vector`
+
+### 📐 Mathematical Definitions
+
+#### 🔢 Dense Matrix Operations
+
+- **Matrix-Vector**:  
+  \[ A \mathbf{x} = [\sum_j a_{ij} x_j]_i \]
+- **Matrix-Matrix**:  
+  \[ (AB)_{ik} = \sum_j a_{ij} b_{jk} \]
+- **Transpose**: \( A^T_{ji} = a_{ij} \)
+- **Element-wise Add/Sub**: \( (A \pm B)_{ij} = a_{ij} \pm b_{ij} \)
+- **In-Place**: \( A \gets A \pm B \)
+- **Element-wise Mul**: \( (A \odot B)_{ij} = a_{ij} b_{ij} \)
+- **Identity**: \( I_{ij} = \delta_{ij} \)
+- **Frobenius Norm**: \( \|A\|_F = \sqrt{\sum a_{ij}^2} \)
+- **Diagonal**: \( 	ext{diag}(A) = [a_{11}, \dots, a_{nn}] \)
+
+#### 🧠 Sparse Matrix (CSR)
+
+- **Matrix-Vector**:  
+  \[ A \mathbf{x} = [\sum_{j \in 	ext{nz}} a_{ij} x_j]_i \]
+- **Matrix-Matrix**, Transpose, Add/Sub, In-Place
+
+#### 🌐 Graph Operations
+
+- **Adjacency Matrix**: \( A_{ij} = 1 	ext{ if edge } (i,j) \)
+- **Degree Vector**: \( d_i = \sum_j A_{ij} \)
+- **Laplacian**: \( L = D - A \)
+- **Normalized Laplacian**:  
+  \[ L_{ij} = egin{cases}
+  1 & i = j \
+  -rac{1}{\sqrt{d_i d_j}} & 	ext{if } (i,j) 	ext{ edge} \
+  0 & 	ext{otherwise}
+  \end{cases} \]
+- **Validation**: Check if all edge indices are valid
+- **To Dense**: Expand CSR to dense
+- **Symmetry Check**: \( A = A^T \)?
+
+### 🧩 Usage
+
+- Graph construction (adjacency, Laplacian)
+- GNN weight transformations
+- Edge scoring (multiplication)
+- Mesh diagnostics (norms, symmetry)
+
+### 🧪 Testing
+
+```bash
+cd build
+make test
+```
 
 ---
 
-### 📄 License
+## 🔨 Building & Integration
 
-MIT License — see [`LICENSE`](./LICENSE) for details.
+```bash
+git clone https://github.com/username/MeshGNN.git
+cd MeshGNN
+mkdir build && cd build
+cmake ..
+make
+```
+
+- Add `include/gnnmath` to your include path
+- Link with the `GNNMath` library
+
+### Requirements
+
+- C++17 compiler (GCC 7+, Clang 5+)
+- CMake ≥ 3.10
 
 ---
+
+## 🤝 Contributing
+
+- Use issues and PRs on GitHub
+- Follow `matrix.hpp`/`vector.hpp` conventions
+- Include unit tests for all new features
+
+## 📄 License
+
+MIT License. See `LICENSE` for details.
