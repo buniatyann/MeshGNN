@@ -85,7 +85,7 @@ The `gnnmath::matrix` namespace provides dense and sparse matrix operations, inc
 #### 🔢 Dense Matrix Operations
 
 - **Matrix-Vector**:  
-  \[ A \mathbf{x} = [\sum_j a_{ij} x_j]_i \]
+  Ax=[j∑​aij​xj​]i​
 - **Matrix-Matrix**:  
   \[ (AB)_{ik} = \sum_j a_{ij} b_{jk} \]
 - **Transpose**: \( A^T_{ji} = a_{ij} \)
