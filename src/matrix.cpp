@@ -7,426 +7,497 @@
 namespace gnnmath {
 namespace matrix {
 
-CSR::CSR(std::size_t r, std::size_t c) : rows(r), cols(c) {
+dense_matrix::dense_matrix(std::size_t r, std::size_t c) : rows_(r), cols_(c) {
     if (r == 0 || c == 0) {
-        throw std::runtime_error("CSR: dimensions must be non-zero (rows=" + std::to_string(r) +
-                                 ", cols=" + std::to_string(c) + ")");
+        throw std::runtime_error("dense_matrix: dimensions must be non-zero");
     }
-    
+
+    data_.resize(r * c, 0.0);
+}
+
+dense_matrix::dense_matrix(const std::vector<std::vector<double>>& data) {
+    if (data.empty() || data[0].empty()) {
+        throw std::runtime_error("dense_matrix: empty input");
+    }
+
+    rows_ = data.size();
+    cols_ = data[0].size();
+    data_.reserve(rows_ * cols_);
+    for (const auto& row : data) {
+        if (row.size() != cols_) {
+            throw std::runtime_error("dense_matrix: inconsistent row sizes");
+        }
+
+        for (double x : row) {
+            if (!std::isfinite(x)) {
+                throw std::runtime_error("dense_matrix: non-finite value");
+            }
+
+            data_.push_back(x);
+        }
+    }
+}
+
+double dense_matrix::operator()(std::size_t i, std::size_t j) const {
+    if (i >= rows_ || j >= cols_) {
+        throw std::out_of_range("dense_matrix: index out of bounds");
+    }
+
+    return data_[i * cols_ + j];
+}
+
+double& dense_matrix::operator()(std::size_t i, std::size_t j) {
+    if (i >= rows_ || j >= cols_) {
+        throw std::out_of_range("dense_matrix: index out of bounds");
+    }
+
+    return data_[i * cols_ + j];
+}
+
+sparse_matrix::sparse_matrix(std::size_t r, std::size_t c) : rows(r), cols(c) {
+    if (r == 0 || c == 0) {
+        throw std::runtime_error("sparse_matrix: dimensions must be non-zero");
+    }
+
     row_ptr.resize(r + 1, 0);
 }
 
-CSR::CSR(const dense_matrix& rhs) {
-    if (rhs.empty()) {
-        throw std::runtime_error("CSR: cannot convert empty dense matrix");
-    }
-    
-    rows = rhs.size();
-    cols = rhs[0].size();
-    for (const auto& row : rhs) {
-        if (row.size() != cols) {
-            throw std::runtime_error("CSR: inconsistent row sizes in dense matrix");
-        }
-    }
-
+sparse_matrix::sparse_matrix(const dense_matrix& rhs) {
+    rows = rhs.rows();
+    cols = rhs.cols();
     row_ptr.resize(rows + 1);
     row_ptr[0] = 0;
-
     for (std::size_t i = 0; i < rows; ++i) {
         for (std::size_t j = 0; j < cols; ++j) {
-            if (std::abs(rhs[i][j]) > 1e-10) { // avoid floating-point noise
-                if (!std::isfinite(rhs[i][j])) {
-                    throw std::runtime_error("CSR: NaN or infinity detected at [" +
-                                             std::to_string(i) + "," + std::to_string(j) + "]");
-                }
-    
-                vals.push_back(rhs[i][j]);
+            double val = rhs(i, j);
+            if (std::abs(val) > 1e-10) {
+                vals.push_back(val);
                 col_ind.push_back(j);
             }
         }
-    
+
         row_ptr[i + 1] = vals.size();
     }
 }
 
-vector CSR::multiply(const vector& x) const {
-    if (cols != x.size()) {
-        throw std::runtime_error("CSR multiply: matrix columns (" + std::to_string(cols) +
-                                 ") must match vector size (" + std::to_string(x.size()) + ")");
+sparse_matrix::sparse_matrix(std::size_t r, std::size_t c, std::vector<double>&& values,
+                            std::vector<std::size_t>&& col_indices, std::vector<std::size_t>&& row_ptrs)
+    : rows(r), cols(c), vals(std::move(values)), col_ind(std::move(col_indices)), row_ptr(std::move(row_ptrs)) {
+    validate();
+}
+
+void sparse_matrix::validate() const {
+    if (rows == 0 || cols == 0) {
+        throw std::runtime_error("sparse_matrix: invalid dimensions");
     }
+    if (row_ptr.size() != rows + 1) {
+        throw std::runtime_error("sparse_matrix: invalid row_ptr size");
+    }
+    if (vals.size() != col_ind.size()) {
+        throw std::runtime_error("sparse_matrix: vals and col_ind size mismatch");
+    }
+    if (row_ptr.back() != vals.size()) {
+        throw std::runtime_error("sparse_matrix: row_ptr.back() does not match vals size");
+    }
+
+    for (std::size_t i = 0; i < col_ind.size(); ++i) {
+        if (col_ind[i] >= cols) {
+            throw std::runtime_error("sparse_matrix: invalid column index");
+        }
+
+        if (!std::isfinite(vals[i])) {
+            throw std::runtime_error("sparse_matrix: non-finite value");
+        }
+    }
+
+    for (std::size_t i = 1; i < row_ptr.size(); ++i) {
+        if (row_ptr[i] < row_ptr[i-1]) {
+            throw std::runtime_error("sparse_matrix: row_ptr not non-decreasing");
+        }
+    }
+}
+
+vector sparse_matrix::multiply(const vector& x) const {
+    if (cols != x.size()) {
+        throw std::runtime_error("sparse_matrix multiply: dimension mismatch");
+    }
+
     vector ans(rows, 0.0);
-    std::for_each(std::execution::par_unseq, ans.begin(), ans.end(),
-                  [this, &x, &ans](double& y) {
-                      std::size_t i = &y - ans.data();
-                      for (std::size_t j = row_ptr[i]; j < row_ptr[i + 1]; ++j) {
-                          y += vals[j] * x[col_ind[j]];
-                      }
-                      if (!std::isfinite(y)) {
-                          throw std::runtime_error("CSR multiply: non-finite result at row " +
-                                                   std::to_string(i));
-                      }
-                  });
+    auto compute = [this, &x, &ans](double& y) {
+        std::size_t i = &y - ans.data();
+        for (std::size_t j = row_ptr[i]; j < row_ptr[i + 1]; ++j) {
+            y += vals[j] * x[col_ind[j]];
+        }
+
+        if (!std::isfinite(y)) {
+            throw std::runtime_error("sparse_matrix multiply: non-finite result");
+        }
+    };
+
+    if (rows > 1000 || vals.size() > 10000) {
+        std::for_each(std::execution::par_unseq, ans.begin(), ans.end(), compute);
+    } 
+    else {
+        std::for_each(ans.begin(), ans.end(), compute);
+    }
     
     return ans;
+}
+
+sparse_matrix sparse_matrix::operator+(const sparse_matrix& rhs) const {
+    if (rows != rhs.rows || cols != rhs.cols) {
+        throw std::runtime_error("sparse_matrix operator+: dimension mismatch");
+    }
+    
+    sparse_matrix result(rows, cols);
+    result.row_ptr[0] = 0;
+    for (std::size_t i = 0; i < rows; ++i) {
+        std::size_t j = row_ptr[i], k = rhs.row_ptr[i];
+        while (j < row_ptr[i + 1] || k < rhs.row_ptr[i + 1]) {
+            std::size_t col_j = (j < row_ptr[i + 1]) ? col_ind[j] : cols;
+            std::size_t col_k = (k < rhs.row_ptr[i + 1]) ? rhs.col_ind[k] : cols;
+            double val = 0.0;
+            if (col_j == col_k) {
+                val = vals[j] + rhs.vals[k];
+                ++j; ++k;
+            } 
+            else if (col_j < col_k) {
+                val = vals[j];
+                ++j;
+            } 
+            else {
+                val = rhs.vals[k];
+                ++k;
+            }
+            
+            if (std::abs(val) > 1e-10) {
+                result.vals.push_back(val);
+                result.col_ind.push_back(std::min(col_j, col_k));
+            }
+        }
+
+        result.row_ptr[i + 1] = result.vals.size();
+    }
+    
+    return result;
+}
+
+sparse_matrix& sparse_matrix::operator+=(const sparse_matrix& rhs) {
+    *this = *this + rhs;
+    return *this;
+}
+
+sparse_matrix sparse_matrix::operator-(const sparse_matrix& rhs) const {
+    if (rows != rhs.rows || cols != rhs.cols) {
+        throw std::runtime_error("sparse_matrix operator-: dimension mismatch");
+    }
+    
+    sparse_matrix result(rows, cols);
+    result.row_ptr[0] = 0;
+    for (std::size_t i = 0; i < rows; ++i) {
+        std::size_t j = row_ptr[i], k = rhs.row_ptr[i];
+        while (j < row_ptr[i + 1] || k < rhs.row_ptr[i + 1]) {
+            std::size_t col_j = (j < row_ptr[i + 1]) ? col_ind[j] : cols;
+            std::size_t col_k = (k < rhs.row_ptr[i + 1]) ? rhs.col_ind[k] : cols;
+            double val = 0.0;
+            if (col_j == col_k) {
+                val = vals[j] - rhs.vals[k];
+                ++j; ++k;
+            } 
+            else if (col_j < col_k) {
+                val = vals[j];
+                ++j;
+            } 
+            else {
+                val = -rhs.vals[k];
+                ++k;
+            }
+            
+            if (std::abs(val) > 1e-10) {
+                result.vals.push_back(val);
+                result.col_ind.push_back(std::min(col_j, col_k));
+            }
+        }
+
+        result.row_ptr[i + 1] = result.vals.size();
+    }
+
+    return result;
+}
+
+sparse_matrix& sparse_matrix::operator-=(const sparse_matrix& rhs) {
+    *this = *this - rhs;
+    return *this;
 }
 
 vector matrix_vector_multiply(const dense_matrix& matrix, const vector& vec) {
-    if (matrix.empty() || matrix[0].empty()) {
+    if (matrix.rows() == 0 || matrix.cols() == 0) {
         throw std::runtime_error("matrix_vector_multiply: empty matrix");
     }
-    
-    if (matrix[0].size() != vec.size()) {
-        throw std::runtime_error("matrix_vector_multiply: matrix columns (" +
-                                 std::to_string(matrix[0].size()) + ") must match vector size (" +
-                                 std::to_string(vec.size()) + ")");
+    if (matrix.cols() != vec.size()) {
+        throw std::runtime_error("matrix_vector_multiply: dimension mismatch");
     }
     
-    for (const auto& row : matrix) {
-        if (row.size() != matrix[0].size()) {
-            throw std::runtime_error("matrix_vector_multiply: inconsistent row sizes");
+    vector ans(matrix.rows(), 0.0);
+    auto compute = [&matrix, &vec, &ans](double& y) {
+        std::size_t i = &y - ans.data();
+        for (std::size_t j = 0; j < matrix.cols(); ++j) {
+            y += matrix(i, j) * vec[j];
         }
+    
+        if (!std::isfinite(y)) {
+            throw std::runtime_error("matrix_vector_multiply: non-finite result");
+        }
+    };
+    
+    if (matrix.rows() > 1000) {
+        std::for_each(std::execution::par_unseq, ans.begin(), ans.end(), compute);
+    } 
+    else {
+        std::for_each(ans.begin(), ans.end(), compute);
     }
-
-    vector ans(matrix.size(), 0.0);
-    std::for_each(std::execution::par_unseq, ans.begin(), ans.end(),
-                  [&matrix, &vec, &ans](double& y) {
-                      std::size_t i = &y - ans.data();
-                      for (std::size_t j = 0; j < matrix[0].size(); ++j) {
-                          y += matrix[i][j] * vec[j];
-                      }
-                      
-                      if (!std::isfinite(y)) {
-                          throw std::runtime_error("matrix_vector_multiply: non-finite result at row " +
-                                                   std::to_string(i));
-                      }
-                  });
     
     return ans;
 }
 
-vector sparse_matrix_vector_multiply(const CSR& matrix, const vector& vec) {
-    return matrix.multiply(vec); // Delegate to CSR::multiply
-}
-
 dense_matrix operator*(const dense_matrix& A, const dense_matrix& B) {
-    if (A.empty() || A[0].empty() || B.empty() || B[0].empty()) {
+    if (A.rows() == 0 || A.cols() == 0 || B.rows() == 0 || B.cols() == 0) {
         throw std::runtime_error("matrix_multiply: empty matrix");
     }
-
-    if (A[0].size() != B.size()) {
-        throw std::runtime_error("matrix_multiply: A columns (" + std::to_string(A[0].size()) +
-                                 ") must match B rows (" + std::to_string(B.size()) + ")");
+    if (A.cols() != B.rows()) {
+        throw std::runtime_error("matrix_multiply: dimension mismatch");
     }
     
-    for (const auto& row : A) {
-        if (row.size() != A[0].size()) {
-            throw std::runtime_error("matrix_multiply: inconsistent row sizes in A");
+    dense_matrix C(A.rows(), B.cols());
+    auto compute = [&A, &B, &C](std::vector<double>::iterator row) {
+        std::size_t i = (row - C.data().begin()) / C.cols();
+        for (std::size_t j = 0; j < B.cols(); ++j) {
+            double sum = 0.0;
+            for (std::size_t k = 0; k < A.cols(); ++k) {
+                sum += A(i, k) * B(k, j);
+            }
+    
+            if (!std::isfinite(sum)) {
+                throw std::runtime_error("matrix_multiply: non-finite result");
+            }
+    
+            (*row) = sum;
+            ++row;
         }
-    }
+    };
     
-    for (const auto& row : B) {
-        if (row.size() != B[0].size()) {
-            throw std::runtime_error("matrix_multiply: inconsistent row sizes in B");
-        }
+    if (A.rows() * B.cols() > 1000000) {
+        std::for_each(std::execution::par_unseq, C.data().begin(), C.data().end(), compute);
+    } 
+    else {
+        std::for_each(C.data().begin(), C.data().end(), compute);
     }
-
-    dense_matrix C(A.size(), std::vector<double>(B[0].size(), 0.0));
-    std::for_each(std::execution::par_unseq, C.begin(), C.end(),
-                  [&A, &B, &C](std::vector<double>& row) {
-                      std::size_t i = &row - C.data();
-                      for (std::size_t j = 0; j < B[0].size(); ++j) {
-                          for (std::size_t k = 0; k < A[0].size(); ++k) {
-                              row[j] += A[i][k] * B[k][j];
-                          }
-    
-                          if (!std::isfinite(row[j])) {
-                              throw std::runtime_error("matrix_multiply: non-finite result at [" +
-                                                       std::to_string(i) + "," + std::to_string(j) + "]");
-                          }
-                      }
-                  });
     
     return C;
 }
 
-CSR sparse_matrix_multiply(const CSR& A, const CSR& B) {
+sparse_matrix sparse_matrix_multiply(const sparse_matrix& A, const sparse_matrix& B) {
     if (A.cols != B.rows) {
-        throw std::runtime_error("sparse_matrix_multiply: A columns (" + std::to_string(A.cols) +
-                                 ") must match B rows (" + std::to_string(B.rows) + ")");
+        throw std::runtime_error("sparse_matrix_multiply: dimension mismatch");
     }
     
-    CSR C(A.rows, B.cols);
-    std::vector<std::size_t> row_nnz(A.rows, 0);
-
-    // Count non-zeros per row
+    sparse_matrix C(A.rows, B.cols);
+    // Symbolic phase: compute non-zero structure
+    std::vector<std::size_t> nnz_per_row(A.rows, 0);
+    std::vector<bool> seen(B.cols);
     for (std::size_t i = 0; i < A.rows; ++i) {
-        std::vector<bool> non_zero(B.cols, false);
+        std::fill(seen.begin(), seen.end(), false);
         for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
             std::size_t k = A.col_ind[j];
-            for (std::size_t l = B.row_ptr[k]; l < B.row_ptr[k + 1]; ++l) {
-                if (!non_zero[B.col_ind[l]]) {
-                    non_zero[B.col_ind[l]] = true;
-                    ++row_nnz[i];
+            for (std::size_t m = B.row_ptr[k]; m < B.row_ptr[k + 1]; ++m) {
+                if (!seen[B.col_ind[m]]) {
+                    seen[B.col_ind[m]] = true;
+                    ++nnz_per_row[i];
                 }
             }
         }
     }
-
-    // Allocate C
+    
     C.row_ptr[0] = 0;
     for (std::size_t i = 0; i < A.rows; ++i) {
-        C.row_ptr[i + 1] = C.row_ptr[i] + row_nnz[i];
+        C.row_ptr[i + 1] = C.row_ptr[i] + nnz_per_row[i];
     }
     
     C.vals.resize(C.row_ptr[A.rows]);
     C.col_ind.resize(C.row_ptr[A.rows]);
-
-    // Compute non-zero elements
+    // Numeric phase: compute values
+    std::vector<std::size_t> pos = C.row_ptr;
     for (std::size_t i = 0; i < A.rows; ++i) {
-        std::vector<double> row(B.cols, 0.0);
+        std::vector<std::pair<std::size_t, double>> row(B.cols, {0, 0.0});
+        std::size_t row_nnz = 0;
         for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
             std::size_t k = A.col_ind[j];
-            for (std::size_t l = B.row_ptr[k]; l < B.row_ptr[k + 1]; ++l) {
-                row[B.col_ind[l]] += A.vals[j] * B.vals[l];
+            double val = A.vals[j];
+            for (std::size_t m = B.row_ptr[k]; m < B.row_ptr[k + 1]; ++m) {
+                std::size_t col = B.col_ind[m];
+                if (row[col].first == 0) {
+                    row[col].first = 1;
+                    row[row_nnz++].first = col;
+                }
+    
+                row[col].second += val * B.vals[m];
             }
         }
     
-        for (std::size_t j = 0; j < B.cols; ++j) {
-            if (std::abs(row[j]) > 1e-10) {
-                C.vals[C.row_ptr[i] + row_nnz[i]] = row[j];
-                C.col_ind[C.row_ptr[i] + row_nnz[i]] = j;
-                ++row_nnz[i];
+        std::sort(row.begin(), row.begin() + row_nnz);
+        for (std::size_t j = 0; j < row_nnz; ++j) {
+            if (std::abs(row[j].second) > 1e-10) {
+                C.vals[pos[i]] = row[j].second;
+                C.col_ind[pos[i]] = row[j].first;
+                ++pos[i];
             }
         }
+    
+        C.row_ptr[i + 1] = pos[i];
     }
+    
+    C.vals.resize(C.row_ptr[A.rows]);
+    C.col_ind.resize(C.row_ptr[A.rows]);
+    C.validate();
     
     return C;
 }
 
 dense_matrix transpose(const dense_matrix& A) {
-    if (A.empty() || A[0].empty()) {
+    if (A.rows() == 0 || A.cols() == 0) {
         throw std::runtime_error("transpose: empty matrix");
     }
     
-    std::size_t rows = A.size(), cols = A[0].size();
-    for (const auto& row : A) {
-        if (row.size() != cols) {
-            throw std::runtime_error("transpose: inconsistent row sizes");
-        }
-    }
-
-    dense_matrix B(cols, std::vector<double>(rows, 0.0));
-    for (std::size_t i = 0; i < rows; ++i) {
-        for (std::size_t j = 0; j < cols; ++j) {
-            B[j][i] = A[i][j];
+    dense_matrix B(A.cols(), A.rows());
+    for (std::size_t i = 0; i < A.rows(); ++i) {
+        for (std::size_t j = 0; j < A.cols(); ++j) {
+            B(j, i) = A(i, j);
         }
     }
     
     return B;
 }
 
-CSR sparse_transpose(const CSR& A) {
-    CSR B(A.cols, A.rows);
-    std::vector<std::vector<std::pair<std::size_t, double>>> temp(A.cols);
+sparse_matrix sparse_transpose(const sparse_matrix& A) {
+    if (A.rows == 0 || A.cols == 0) {
+        throw std::runtime_error("sparse_transpose: empty matrix");
+    }
     
+    sparse_matrix B(A.cols, A.rows);
+    std::vector<std::size_t> count(A.cols + 1, 0);
+    for (std::size_t k = 0; k < A.col_ind.size(); ++k) {
+        ++count[A.col_ind[k] + 1];
+    }
+    
+    std::partial_sum(count.begin(), count.end(), count.begin());
+    B.vals.resize(A.vals.size());
+    B.col_ind.resize(A.col_ind.size());
+    B.row_ptr = count;
+    std::vector<std::size_t> indices = count;
     for (std::size_t i = 0; i < A.rows; ++i) {
-        for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
-            temp[A.col_ind[j]].emplace_back(i, A.vals[j]);
+        for (std::size_t k = A.row_ptr[i]; k < A.row_ptr[i + 1]; ++k) {
+            std::size_t j = A.col_ind[k];
+            std::size_t idx = indices[j]++;
+            B.col_ind[idx] = i;
+            B.vals[idx] = A.vals[k];
         }
-    }
-
-    B.row_ptr[0] = 0;
-    std::size_t pos = 0;
-    for (std::size_t i = 0; i < A.cols; ++i) {
-        for (const auto& [col, val] : temp[i]) {
-            B.col_ind.push_back(col);
-            B.vals.push_back(val);
-            ++pos;
-        }
-        B.row_ptr[i + 1] = pos;
     }
     
+    B.validate();
     return B;
 }
 
 dense_matrix operator+(const dense_matrix& A, const dense_matrix& B) {
-    if (A.size() != B.size() || A.empty() || A[0].size() != B[0].size()) {
-        throw std::runtime_error("operator+: dimension mismatch (A: " +
-                                 std::to_string(A.size()) + "x" + std::to_string(A[0].size()) +
-                                 ", B: " + std::to_string(B.size()) + "x" +
-                                 std::to_string(B[0].size()) + ")");
+    if (A.rows() != B.rows() || A.cols() != B.cols()) {
+        throw std::runtime_error("operator+: dimension mismatch");
     }
     
-    dense_matrix C(A.size(), std::vector<double>(A[0].size()));
-    std::for_each(std::execution::par_unseq, C.begin(), C.end(),
-                  [&A, &B, &C](std::vector<double>& row) {
-                      std::size_t i = &row - C.data();
-                      std::transform(A[i].begin(), A[i].end(), B[i].begin(), row.begin(),
-                                     [](double a, double b) {
-                                         double sum = a + b;
-                                         if (!std::isfinite(sum)) {
-                                             throw std::runtime_error("operator+: non-finite result");
-                                         }
+    dense_matrix C(A.rows(), A.cols());
+    auto compute = [&A, &B, &C](double& c) {
+        std::size_t idx = &c - C.data().data();
+        c = A.data()[idx] + B.data()[idx];
+        if (!std::isfinite(c)) {
+            throw std::runtime_error("operator+: non-finite result");
+        }
+    };
     
-                                         return sum;
-                                     });
-                  });
+    if (A.rows() * A.cols() > 1000000) {
+        std::for_each(std::execution::par_unseq, C.data().begin(), C.data().end(), compute);
+    } 
+    else {
+        std::for_each(C.data().begin(), C.data().end(), compute);
+    }
     
     return C;
 }
 
 dense_matrix& operator+=(dense_matrix& A, const dense_matrix& B) {
-    if (A.size() != B.size() || A.empty() || A[0].size() != B[0].size()) {
+    if (A.rows() != B.rows() || A.cols() != B.cols()) {
         throw std::runtime_error("operator+=: dimension mismatch");
     }
     
-    std::for_each(std::execution::par_unseq, A.begin(), A.end(),
-                  [&B, &A](std::vector<double>& row) {
-                      std::size_t i = &row - A.data();
-                      std::transform(row.begin(), row.end(), B[i].begin(), row.begin(),
-                                     [](double a, double b) {
-                                         double sum = a + b;
-                                         if (!std::isfinite(sum)) {
-                                             throw std::runtime_error("operator+=: non-finite result");
-                                         }
-                                         
-                                         return sum;
-                                     });
-                  });
+    auto compute = [&A, &B](double& a) {
+        std::size_t idx = &a - A.data().data();
+        a += B.data()[idx];
+        if (!std::isfinite(a)) {
+            throw std::runtime_error("operator+=: non-finite result");
+        }
+    };
+    
+    if (A.rows() * A.cols() > 1000000) {
+        std::for_each(std::execution::par_unseq, A.data().begin(), A.data().end(), compute);
+    } 
+    else {
+        std::for_each(A.data().begin(), A.data().end(), compute);
+    }
     
     return A;
 }
 
 dense_matrix operator-(const dense_matrix& A, const dense_matrix& B) {
-    if (A.size() != B.size() || A.empty() || A[0].size() != B[0].size()) {
+    if (A.rows() != B.rows() || A.cols() != B.cols()) {
         throw std::runtime_error("operator-: dimension mismatch");
     }
     
-    dense_matrix C(A.size(), std::vector<double>(A[0].size()));
-    std::for_each(std::execution::par_unseq, C.begin(), C.end(),
-                  [&A, &B, &C](std::vector<double>& row) {
-                      std::size_t i = &row - C.data();
-                      std::transform(A[i].begin(), A[i].end(), B[i].begin(), row.begin(),
-                                     [](double a, double b) {
-                                         double diff = a - b;
-                                         if (!std::isfinite(diff)) {
-                                             throw std::runtime_error("operator-: non-finite result");
-                                         }
-                            
-                                         return diff;
-                                     });
-                  });
+    dense_matrix C(A.rows(), A.cols());
+    auto compute = [&A, &B, &C](double& c) {
+        std::size_t idx = &c - C.data().data();
+        c = A.data()[idx] - B.data()[idx];
+        if (!std::isfinite(c)) {
+            throw std::runtime_error("operator-: non-finite result");
+        }
+    };
+    
+    if (A.rows() * A.cols() > 1000000) {
+        std::for_each(std::execution::par_unseq, C.data().begin(), C.data().end(), compute);
+    } 
+    else {
+        std::for_each(C.data().begin(), C.data().end(), compute);
+    }
     
     return C;
 }
 
 dense_matrix& operator-=(dense_matrix& A, const dense_matrix& B) {
-    if (A.size() != B.size() || A.empty() || A[0].size() != B[0].size()) {
+    if (A.rows() != B.rows() || A.cols() != B.cols()) {
         throw std::runtime_error("operator-=: dimension mismatch");
     }
-   
-    std::for_each(std::execution::par_unseq, A.begin(), A.end(),
-                  [&A, &B](std::vector<double>& row) {
-                      std::size_t i = &row - A.data();
-                      std::transform(row.begin(), row.end(), B[i].begin(), row.begin(),
-                                     [](double a, double b) {
-                                         double diff = a - b;
-                                         if (!std::isfinite(diff)) {
-                                             throw std::runtime_error("operator-=: non-finite result");
-                                         }
-                                         
-                                         return diff;
-                                     });
-                  });
-
-    return A;
-}
-
-CSR operator+(const CSR& A, const CSR& B) {
-    if (A.rows != B.rows || A.cols != B.cols) {
-        throw std::runtime_error("CSR operator+: dimension mismatch");
+    
+    auto compute = [&A, &B](double& a) {
+        std::size_t idx = &a - A.data().data();
+        a -= B.data()[idx];
+        if (!std::isfinite(a)) {
+            throw std::runtime_error("operator-=: non-finite result");
+        }
+    };
+    
+    if (A.rows() * A.cols() > 1000000) {
+        std::for_each(std::execution::par_unseq, A.data().begin(), A.data().end(), compute);
+    } 
+    else {
+        std::for_each(A.data().begin(), A.data().end(), compute);
     }
     
-    CSR C(A.rows, A.cols);
-    for (std::size_t i = 0; i < A.rows; ++i) {
-        std::vector<std::pair<std::size_t, double>> non_zeros;
-        for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
-            non_zeros.emplace_back(A.col_ind[j], A.vals[j]);
-        }
-    
-        for (std::size_t j = B.row_ptr[i]; j < B.row_ptr[i + 1]; ++j) {
-            non_zeros.emplace_back(B.col_ind[j], B.vals[j]);
-        }
-    
-        std::sort(non_zeros.begin(), non_zeros.end());
-        std::size_t k = 0;
-        while (k < non_zeros.size()) {
-            double sum = non_zeros[k].second;
-            std::size_t col = non_zeros[k].first;
-            while (k + 1 < non_zeros.size() && non_zeros[k + 1].first == col) {
-                sum += non_zeros[++k].second;
-            }
-    
-            if (std::abs(sum) > 1e-10) {
-                C.vals.push_back(sum);
-                C.col_ind.push_back(col);
-            }
-    
-            ++k;
-        }
-    
-        C.row_ptr[i + 1] = C.vals.size();
-    }
-    
-    return C;
-}
-
-CSR& operator+=(CSR& A, const CSR& B) {
-    A = A + B;
-    return A;
-}
-
-CSR operator-(const CSR& A, const CSR& B) {
-    if (A.rows != B.rows || A.cols != B.cols) {
-        throw std::runtime_error("CSR operator-: dimension mismatch");
-    }
-    
-    CSR C(A.rows, A.cols);
-    for (std::size_t i = 0; i < A.rows; ++i) {
-        std::vector<std::pair<std::size_t, double>> non_zeros;
-        for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
-            non_zeros.emplace_back(A.col_ind[j], A.vals[j]);
-        }
-    
-        for (std::size_t j = B.row_ptr[i]; j < B.row_ptr[i + 1]; ++j) {
-            non_zeros.emplace_back(B.col_ind[j], -B.vals[j]);
-        }
-    
-        std::sort(non_zeros.begin(), non_zeros.end());
-        std::size_t k = 0;
-        while (k < non_zeros.size()) {
-            double sum = non_zeros[k].second;
-            std::size_t col = non_zeros[k].first;
-            while (k + 1 < non_zeros.size() && non_zeros[k + 1].first == col) {
-                sum += non_zeros[++k].second;
-            }
-    
-            if (std::abs(sum) > 1e-10) {
-                C.vals.push_back(sum);
-                C.col_ind.push_back(col);
-            }
-    
-            ++k;
-        }
-    
-        C.row_ptr[i + 1] = C.vals.size();
-    }
-    
-    return C;
-}
-
-CSR& operator-=(CSR& A, const CSR& B) {
-    A = A - B;
     return A;
 }
 
@@ -435,24 +506,23 @@ dense_matrix I(std::size_t n) {
         throw std::runtime_error("I: dimension must be non-zero");
     }
     
-    dense_matrix identity(n, std::vector<double>(n, 0.0));
+    dense_matrix identity(n, n);
     for (std::size_t i = 0; i < n; ++i) {
-        identity[i][i] = 1.0;
+        identity(i, i) = 1.0;
     }
     
     return identity;
 }
 
-CSR Identity(std::size_t n) {
+sparse_matrix Identity(std::size_t n) {
     if (n == 0) {
         throw std::runtime_error("Identity: dimension must be non-zero");
     }
     
-    CSR identity(n, n);
+    sparse_matrix identity(n, n);
     identity.vals.resize(n, 1.0);
     identity.col_ind.resize(n);
     identity.row_ptr.resize(n + 1);
-    
     for (std::size_t i = 0; i < n; ++i) {
         identity.col_ind[i] = i;
         identity.row_ptr[i] = i;
@@ -462,16 +532,16 @@ CSR Identity(std::size_t n) {
     return identity;
 }
 
-CSR build_adj_matrix(std::size_t num_vertices, const std::vector<std::pair<std::size_t, std::size_t>>& edges) {
+sparse_matrix build_adj_matrix(std::size_t num_vertices, const std::vector<std::pair<std::size_t, std::size_t>>& edges) {
     if (!validate(edges, num_vertices)) {
         throw std::runtime_error("build_adj_matrix: invalid edges");
     }
     
-    CSR adj(num_vertices, num_vertices);
+    sparse_matrix adj(num_vertices, num_vertices);
     std::vector<std::vector<std::size_t>> adj_list(num_vertices);
     for (const auto& [u, v] : edges) {
         adj_list[u].push_back(v);
-        adj_list[v].push_back(u); // Undirected graph
+        adj_list[v].push_back(u);
     }
     
     adj.row_ptr[0] = 0;
@@ -481,14 +551,14 @@ CSR build_adj_matrix(std::size_t num_vertices, const std::vector<std::pair<std::
             adj.vals.push_back(1.0);
             adj.col_ind.push_back(j);
         }
-    
         adj.row_ptr[i + 1] = adj.vals.size();
     }
     
+    adj.validate();
     return adj;
 }
 
-vector compute_degrees(const CSR& A) {
+vector compute_degrees(const sparse_matrix& A) {
     vector degrees(A.rows, 0.0);
     for (std::size_t i = 0; i < A.rows; ++i) {
         degrees[i] = static_cast<double>(A.row_ptr[i + 1] - A.row_ptr[i]);
@@ -497,9 +567,9 @@ vector compute_degrees(const CSR& A) {
     return degrees;
 }
 
-CSR laplacian_matrix(const CSR& A) {
+sparse_matrix laplacian_matrix(const sparse_matrix& A) {
     vector degrees = compute_degrees(A);
-    CSR L(A.rows, A.cols);
+    sparse_matrix L(A.rows, A.cols);
     for (std::size_t i = 0; i < A.rows; ++i) {
         L.vals.push_back(degrees[i]);
         L.col_ind.push_back(i);
@@ -511,17 +581,18 @@ CSR laplacian_matrix(const CSR& A) {
         L.row_ptr[i + 1] = L.vals.size();
     }
     
+    L.validate();
     return L;
 }
 
-CSR normalized_laplacian_matrix(const CSR& A) {
+sparse_matrix normalized_laplacian_matrix(const sparse_matrix& A) {
     vector degrees = compute_degrees(A);
-    CSR L = laplacian_matrix(A);
-    CSR norm_L(A.rows, A.cols);
+    sparse_matrix L = laplacian_matrix(A);
+    sparse_matrix norm_L(A.rows, A.cols);
     for (std::size_t i = 0; i < A.rows; ++i) {
         double sqrt_deg_i = std::sqrt(degrees[i]);
         if (sqrt_deg_i == 0.0) {
-            continue; // Skip isolated vertices
+            continue;
         }
     
         for (std::size_t j = L.row_ptr[i]; j < L.row_ptr[i + 1]; ++j) {
@@ -540,6 +611,7 @@ CSR normalized_laplacian_matrix(const CSR& A) {
         norm_L.row_ptr[i + 1] = norm_L.vals.size();
     }
     
+    norm_L.validate();
     return norm_L;
 }
 
@@ -554,67 +626,73 @@ bool validate(const std::vector<std::pair<std::size_t, std::size_t>>& edges, std
 }
 
 dense_matrix elementwise_multiply(const dense_matrix& A, const dense_matrix& B) {
-    if (A.size() != B.size() || A.empty() || A[0].size() != B[0].size()) {
+    if (A.rows() != B.rows() || A.cols() != B.cols()) {
         throw std::runtime_error("elementwise_multiply: dimension mismatch");
     }
     
-    dense_matrix C(A.size(), std::vector<double>(A[0].size()));
-    std::for_each(std::execution::par_unseq, C.begin(), C.end(),
-                  [&A, &B, &C](std::vector<double>& row) {
-                      std::size_t i = &row - C.data();
-                      std::transform(A[i].begin(), A[i].end(), B[i].begin(), row.begin(),
-                                     [](double a, double b) {
-                                         double prod = a * b;
-                                         if (!std::isfinite(prod)) {
-                                             throw std::runtime_error("elementwise_multiply: non-finite result");
-                                         }
-                                         return prod;
-                                     });
-                  });
+    dense_matrix C(A.rows(), A.cols());
+    auto compute = [&A, &B, &C](double& c) {
+        std::size_t idx = &c - C.data().data();
+        c = A.data()[idx] * B.data()[idx];
+        if (!std::isfinite(c)) {
+            throw std::runtime_error("elementwise_multiply: non-finite result");
+        }
+    };
+    
+    if (A.rows() * A.cols() > 1000000) {
+        std::for_each(std::execution::par_unseq, C.data().begin(), C.data().end(), compute);
+    } 
+    else {
+        std::for_each(C.data().begin(), C.data().end(), compute);
+    }
     
     return C;
 }
 
 double frobenius_norm(const dense_matrix& A) {
-    if (A.empty() || A[0].empty()) {
+    if (A.rows() == 0 || A.cols() == 0) {
         throw std::runtime_error("frobenius_norm: empty matrix");
     }
     
     double sum = 0.0;
-    for (const auto& row : A) {
-        for (double x : row) {
-            sum += x * x;
-            if (!std::isfinite(sum)) {
-                throw std::runtime_error("frobenius_norm: non-finite result");
-            }
+    auto compute = [&sum](double x) {
+        sum += x * x;
+        if (!std::isfinite(sum)) {
+            throw std::runtime_error("frobenius_norm: non-finite result");
         }
+    };
+    
+    if (A.data().size() > 1000000) {
+        std::for_each(std::execution::par_unseq, A.data().begin(), A.data().end(), compute);
+    } 
+    else {
+        std::for_each(A.data().begin(), A.data().end(), compute);
     }
     
     return std::sqrt(sum);
 }
 
 vector extract_diagonal(const dense_matrix& A) {
-    if (A.empty() || A[0].empty()) {
+    if (A.rows() == 0 || A.cols() == 0) {
         throw std::runtime_error("extract_diagonal: empty matrix");
     }
-    
-    if (A.size() != A[0].size()) {
+    if (A.rows() != A.cols()) {
         throw std::runtime_error("extract_diagonal: matrix must be square");
     }
     
-    vector diag(A.size());
-    for (std::size_t i = 0; i < A.size(); ++i) {
-        diag[i] = A[i][i];
+    vector diag(A.rows());
+    for (std::size_t i = 0; i < A.rows(); ++i) {
+        diag[i] = A(i, i);
     }
     
     return diag;
 }
 
-dense_matrix to_dense(const CSR& A) {
-    dense_matrix dense(A.rows, std::vector<double>(A.cols, 0.0));
+dense_matrix to_dense(const sparse_matrix& A) {
+    dense_matrix dense(A.rows, A.cols);
     for (std::size_t i = 0; i < A.rows; ++i) {
         for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
-            dense[i][A.col_ind[j]] = A.vals[j];
+            dense(i, A.col_ind[j]) = A.vals[j];
         }
     }
     
@@ -622,32 +700,25 @@ dense_matrix to_dense(const CSR& A) {
 }
 
 bool is_valid(const dense_matrix& A) {
-    if (A.empty()) {
+    if (A.rows() == 0 || A.cols() == 0) {
         return true;
     }
     
-    std::size_t cols = A[0].size();
-    for (const auto& row : A) {
-        if (row.size() != cols) {
+    for (double x : A.data()) {
+        if (!std::isfinite(x)) {
             return false;
-        }
-    
-        for (double x : row) {
-            if (!std::isfinite(x)) {
-                return false;
-            }
         }
     }
     
     return true;
 }
 
-bool is_symmetric(const CSR& A) {
+bool is_symmetric(const sparse_matrix& A) {
     if (A.rows != A.cols) {
         return false;
     }
     
-    CSR AT = sparse_transpose(A);
+    sparse_matrix AT = sparse_transpose(A);
     if (AT.vals.size() != A.vals.size()) {
         return false;
     }
@@ -666,15 +737,6 @@ bool is_symmetric(const CSR& A) {
     
     return true;
 }
-
-// void print_matrix(const dense_matrix& A) {
-//     for (const auto& row : A) {
-//         for (double x : row) {
-//             std::cout << x << " ";
-//         }
-//         std::cout << std::endl;
-//     }
-// }
 
 } // namespace matrix
 } // namespace gnnmath
