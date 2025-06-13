@@ -13,7 +13,7 @@
 namespace gnnmath {
 namespace graph {
 
-using sparse_matrix = gnnmath::matrix::CSR; ///< Sparse matrix type.
+using sparse_matrix = gnnmath::matrix::sparse_matrix; ///< Sparse matrix type.
 using feature_vector = std::vector<gnnmath::vector::vector>; ///< Vector of feature vectors.
 
 /**

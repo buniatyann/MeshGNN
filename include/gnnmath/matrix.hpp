@@ -33,10 +33,16 @@ namespace matrix {
         std::size_t cols() const { return cols_; }
 
         /// @brief Const element access.
+        /// @param i Row index.
+        /// @param j Column index.
+        /// @return Element value.
         /// @throws std::out_of_range If indices are invalid.
         double operator()(std::size_t i, std::size_t j) const;
 
         /// @brief Non-const element access.
+        /// @param i Row index.
+        /// @param j Column index.
+        /// @return Element value.
         /// @throws std::out_of_range If indices are invalid.
         double& operator()(std::size_t i, std::size_t j);
 
