@@ -226,6 +226,7 @@ void simplify_random_removal(mesh& m, index_t target_vertices) {
             new_faces.push_back(f);
         }
     }
+    
     m.faces() = std::move(new_faces);
 
     // Compact vertices
@@ -238,6 +239,7 @@ void simplify_random_removal(mesh& m, index_t target_vertices) {
             old_to_new[i] = new_idx++;
         }
     }
+
     m.vertices() = std::move(new_vertices);
 
     // Update faces with new indices and rebuild edges
@@ -246,6 +248,7 @@ void simplify_random_removal(mesh& m, index_t target_vertices) {
         f[1] = old_to_new[f[1]];
         f[2] = old_to_new[f[2]];
     }
+
     m.edges().clear();
     m.edge_ind_map().clear();
     m.adjacency().clear();
@@ -256,6 +259,7 @@ void simplify_random_removal(mesh& m, index_t target_vertices) {
             {std::min(v1, v2), std::max(v1, v2)},
             {std::min(v2, v0), std::max(v2, v0)}
         };
+
         for (const auto& [u2, v2] : face_edges) {
             auto key = std::make_pair(u2, v2);
             if (!m.edge_ind_map().count(key)) {

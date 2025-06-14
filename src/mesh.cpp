@@ -107,7 +107,7 @@ void mesh::load_obj(const std::string& filename) {
         
         edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
     }
-
+    
     validate();
 }
 

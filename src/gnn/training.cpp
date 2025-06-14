@@ -105,3 +105,4 @@ void trainer::train_step(const std::vector<vector>& features,
         }
     }
 }
+}

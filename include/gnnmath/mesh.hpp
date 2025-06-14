@@ -63,18 +63,6 @@ public:
     std::size_t n_faces() const { return faces_.size(); }
 
     /**
-     * @brief Returns the vertices of the mesh (const access).
-     * @return Const reference to the vector of vertices.
-     */
-    const std::vector<vertex>& vertices() const { return vertices_; }
-
-    /**
-     * @brief Returns the vertices of the mesh (non-const access).
-     * @return Reference to the vector of vertices.
-     */
-    std::vector<vertex>& vertices() { return vertices_; }
-
-    /**
      * @brief Returns the edges of the mesh (const access).
      * @return Const reference to the vector of edges.
      */
@@ -251,6 +239,7 @@ private:
     /// @brief Edge index map: (u, v) pair to edge index in edges_.
     std::unordered_map<std::pair<std::size_t, std::size_t>, std::size_t, pair_hash> edge_index_map_;
 
+public:
     // Friend functions for direct access
     friend void simplify_gnn_edge_collapse(mesh&, index_t, const std::vector<scalar_t>&);
     friend void simplify_random_removal(mesh&, index_t);

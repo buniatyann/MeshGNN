@@ -2,24 +2,22 @@
 #include <algorithm>
 #include <execution>
 #include <numeric>
-#include <mutex>
 
 namespace gnnmath {
 namespace graph {
 
-using vector = gnnmath::vector::vector; ///< Vector for features.
-using edge = std::pair<std::size_t, std::size_t>; ///< Edge as vertex indices (u, v).
-using vector_container = std::vector<vector>; ///< Container for vectors.
-using edge_container = std::vector<edge>; ///< Container for edges.
-using adjacency_map = std::unordered_map<std::size_t, std::vector<std::pair<std::size_t, std::size_t>>>; ///< Adjacency map type.
-using feature_vector = std::vector<gnnmath::vector::vector>; ///< Vector of feature vectors.
+using vector = gnnmath::vector::vector;
+using edge = std::pair<std::size_t, std::size_t>;
+using vector_container = std::vector<vector>;
+using edge_container = std::vector<edge>;
+using adjacency_map = std::unordered_map<std::size_t, std::vector<std::pair<std::size_t, std::size_t>>>;
+using feature_vector = std::vector<gnnmath::vector::vector>;
 
 graph::graph(std::size_t num_vertices,
              const edge_container& edges,
              const vector_container& node_features,
              const vector_container& edge_features)
     : num_vertices(num_vertices), edges(edges), node_features(node_features), edge_features(edge_features) {
-    // Validate inputs
     if (node_features.size() != num_vertices) {
         throw std::runtime_error("graph constructor: node_features size mismatch (" +
                                  std::to_string(node_features.size()) + " != " +
@@ -34,7 +32,7 @@ graph::graph(std::size_t num_vertices,
             throw std::runtime_error("graph constructor: invalid vertex index");
         }
     }
-    // Check feature dimensions
+    
     if (!node_features.empty() && !std::all_of(node_features.begin(), node_features.end(),
         [&](const auto& f) { return f.size() == node_features[0].size(); })) {
         throw std::runtime_error("graph constructor: inconsistent node feature dimensions");
@@ -44,7 +42,6 @@ graph::graph(std::size_t num_vertices,
         throw std::runtime_error("graph constructor: inconsistent edge feature dimensions");
     }
 
-    // Build adjacency list
     for (std::size_t i = 0; i < edges.size(); ++i) {
         const auto& [u, v] = edges[i];
         adjacency[u].emplace_back(v, i);
@@ -103,12 +100,12 @@ sparse_matrix to_adjacency_matrix(const graph& graph) {
     for (auto& row : rows) {
         std::sort(std::execution::par_unseq, row.begin(), row.end(),
                   [](const auto& a, const auto& b) { return a.first < b.first; });
-            for (const auto& [col, val] : row) {
-                values.push_back(val);
-                col_indices.push_back(col);
-            }
+        for (const auto& [col, val] : row) {
+            values.push_back(val);
+            col_indices.push_back(col);
+        }
     
-            row_ptr.push_back(values.size());
+        row_ptr.push_back(values.size());
     }
     
     return sparse_matrix(graph.num_vertices, graph.num_vertices,
@@ -130,18 +127,24 @@ feature_vector message_passing(
     
     feature_vector result(graph.num_vertices,
         messages.empty() ? vector() : vector(messages[0].size(), 0.0));
-    std::mutex mtx;
+    
+    std::vector<std::vector<vector>> local_results(graph.num_vertices, 
+        messages.empty() ? std::vector<vector>() : std::vector<vector>(1, vector(messages[0].size(), 0.0)));
+    
     std::for_each(std::execution::par_unseq, graph.edges.begin(), graph.edges.end(),
                   [&](const auto& edge) {
                       auto [u, v] = edge;
                       std::size_t edge_idx = &edge - graph.edges.data();
-                      auto weighted_msg = vector::scalar_multiply(messages[edge_idx], edge_weights[edge_idx]);
-                      {
-                          std::lock_guard<std::mutex> lock(mtx);
-                          result[v] = vector::operator+(result[v], weighted_msg);
-                          result[u] = vector::operator+(result[u], weighted_msg);
-                      }
+                      auto weighted_msg = gnnmath::vector::scalar_multiply(messages[edge_idx], edge_weights[edge_idx]);
+                      local_results[u][0] = gnnmath::vector::operator+(local_results[u][0], weighted_msg);
+                      local_results[v][0] = gnnmath::vector::operator+(local_results[v][0], weighted_msg);
                   });
+    
+    for (std::size_t i = 0; i < graph.num_vertices; ++i) {
+        if (!local_results[i].empty()) {
+            result[i] = local_results[i][0];
+        }
+    }
     
     return result;
 }
@@ -164,29 +167,29 @@ feature_vector aggregate_features(
     
     feature_vector result(graph.num_vertices,
         node_features.empty() ? vector() : vector(node_features[0].size(), 0.0));
-    std::for_each(std::execution::par_unseq, std::size_t(0), graph.num_vertices,
-                  [&](std::size_t v) {
-                      const auto& neighbors = graph.adjacency.at(v);
-                      if (neighbors.empty()) 
-                        return;
-                      if (mode == "sum" || mode == "mean") {
-                          for (const auto& [u, _] : neighbors) {
-                              result[v] = gnnmath::vector::operator+(result[v], node_features[u]);
-                          }
-                          
-                          if (mode == "mean") {
-                              result[v] = gnnmath::vector::scalar_multiply(result[v], 1.0 / neighbors.size());
-                          }
-                      } 
-                      else { // max
-                          result[v] = node_features[neighbors[0].first];
-                          for (const auto& [u, _] : neighbors) {
-                              for (std::size_t i = 0; i < result[v].size(); ++i) {
-                                  result[v][i] = std::max(result[v][i], node_features[u][i]);
-                              }
-                          }
-                      }
-                  });
+    
+    for (std::size_t v = 0; v < graph.num_vertices; ++v) {
+        const auto& neighbors = graph.adjacency.at(v);
+        if (neighbors.empty()) continue;
+        
+        if (mode == "sum" || mode == "mean") {
+            for (const auto& [u, _] : neighbors) {
+                result[v] = gnnmath::vector::operator+(result[v], node_features[u]);
+            }
+            
+            if (mode == "mean") {
+                result[v] = gnnmath::vector::scalar_multiply(result[v], 1.0 / neighbors.size());
+            }
+        } 
+        else { // max
+            result[v] = node_features[neighbors[0].first];
+            for (const auto& [u, _] : neighbors) {
+                for (std::size_t i = 0; i < result[v].size(); ++i) {
+                    result[v][i] = std::max(result[v][i], node_features[u][i]);
+                }
+            }
+        }
+    }
 
     return result;
 }
@@ -232,12 +235,12 @@ std::vector<std::size_t> get_neighbors(const graph& graph, std::size_t vertex) {
 std::vector<std::size_t> compute_degree(const graph& graph) {
     validate(graph);
     std::vector<std::size_t> degrees(graph.num_vertices, 0);
-    std::for_each(std::execution::par_unseq, std::size_t(0), graph.num_vertices,
-                  [&](std::size_t v) {
-                      if (auto it = graph.adjacency.find(v); it != graph.adjacency.end()) {
-                          degrees[v] = it->second.size();
-                      }
-                  });
+    
+    for (std::size_t v = 0; v < graph.num_vertices; ++v) {
+        if (auto it = graph.adjacency.find(v); it != graph.adjacency.end()) {
+            degrees[v] = it->second.size();
+        }
+    }
     
     return degrees;
 }

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <execution>
+#include "types.hpp"
 
 namespace gnnmath {
 namespace vector {

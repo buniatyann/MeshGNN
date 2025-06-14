@@ -78,12 +78,12 @@ std::vector<vector::vector> compute_combined_node_features(const mesh& m) {
 
     std::vector<vector::vector> features(m.n_vertices());
     std::transform(std::execution::par_unseq, coords.begin(), coords.end(), features.begin(),
-                   [&normals, &curvature, i = 0](const auto& coord) mutable {
-                       vector::vector feat(coord.begin(), coord.end());
-                       feat.insert(feat.end(), normals[i].begin(), normals[i].end());
-                       feat.push_back(curvature[i++]);
-                       return feat;
-                   });
+                [&normals, &curvature, i = 0](const auto& coord) mutable {
+                    vector::vector feat(coord.begin(), coord.end());
+                    feat.insert(feat.end(), normals[i].begin(), normals[i].end());
+                    feat.push_back(curvature[i++]);
+                    return feat;
+                });
     return features;
 }
 
@@ -101,22 +101,22 @@ std::vector<vector::vector> compute_neighbor_edge_features(const mesh& m) {
     std::vector<vector::vector> features(edges.size());
 
     std::transform(std::execution::par_unseq, edges.begin(), edges.end(), features.begin(),
-                   [&m, &normals, &edge_map](const auto& e) {
-                       const auto& [u, v] = e;
-                       auto key = std::make_pair(std::min(u, v), std::max(u, v));
-                       if (!edge_map.count(key)) {
-                           return vector::vector{0.0, 0.0}; // Invalid edge
-                       }
-                       // Edge length
-                       scalar_t len = vector::euclidean_norm(
-                           vector::operator-(m.vertices()[u], m.vertices()[v]));
-                       // Normal angle difference
-                       scalar_t cos_angle = vector::dot_product(normals[u], normals[v]);
-                       if (cos_angle < -1.0) cos_angle = -1.0;
-                       if (cos_angle > 1.0) cos_angle = 1.0;
-                       scalar_t angle = std::acos(cos_angle);
-                       return vector::vector{len, angle};
-                   });
+                [&m, &normals, &edge_map](const auto& e) {
+                    const auto& [u, v] = e;
+                    auto key = std::make_pair(std::min(u, v), std::max(u, v));
+                    if (!edge_map.count(key)) {
+                        return vector::vector{0.0, 0.0}; // Invalid edge
+                    }
+                    // Edge length
+                    scalar_t len = vector::euclidean_norm(
+                        vector::operator-(m.vertices()[u], m.vertices()[v]));
+                    // Normal angle difference
+                    scalar_t cos_angle = vector::dot_product(normals[u], normals[v]);
+                    if (cos_angle < -1.0) cos_angle = -1.0;
+                    if (cos_angle > 1.0) cos_angle = 1.0;
+                    scalar_t angle = std::acos(cos_angle);
+                    return vector::vector{len, angle};
+                });
     return features;
 }
 
