@@ -1,7 +1,7 @@
-#include "../../include/gnnmath/mesh.hpp"
-#include "../../include/gnnmath/vector.hpp"
-#include "../../include/gnnmath/matrix.hpp"
-#include "../../include/gnnmath//random.hpp"
+#include "../include/gnnmath/mesh.hpp"
+#include "../include/gnnmath/vector.hpp"
+#include "../include/gnnmath/matrix.hpp"
+#include "../include/gnnmath//random.hpp"
 #include <vector>
 #include <queue>
 #include <stdexcept>
