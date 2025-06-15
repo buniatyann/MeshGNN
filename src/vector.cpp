@@ -97,7 +97,11 @@ namespace vector {
     vector sigmoid(const vector& a) {
         vector ans(a.size());
         std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
-                       [](double x) { return 1.0 / (1.0 + std::exp(-std::min(x, 700.0))); });
+                       [](double x) {
+                           // Clamp x to avoid overflow: [-700, 700]
+                           //x = std::clamp(x, -700.0, 700.0);
+                           return 1.0 / (1.0 + std::exp(-std::min(x, 700.0))); 
+                       });
         
         return ans;
     }
