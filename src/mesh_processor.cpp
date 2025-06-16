@@ -47,23 +47,24 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
         throw std::invalid_argument("simplify_gnn_edge_collapse: invalid gnn_scores size");
     }
 
-    // Priority queue for edges based on collapse cost
+    // priority queue for edges based on collapse cost
     using cost_t = std::pair<scalar_t, index_t>;
     std::priority_queue<cost_t, std::vector<cost_t>, std::greater<cost_t>> pq;
 
-    // Initialize costs using GNN scores or quadric error
+    // init costs using GNN scores or quadric error
     const auto& edges = m.edges();
     std::vector<scalar_t> costs(edges.size());
     if (!gnn_scores.empty()) {
         costs = gnn_scores;
-    } else {
+    } 
+    else {
         std::transform(std::execution::par_unseq, edges.begin(), edges.end(), costs.begin(),
                        [&m](const auto& e) {
                            return compute_quadric_error(m, e.first, e.second);
                        });
     }
 
-    // Populate queue using edge_ind_map for validation
+    // populate queue using edge_ind_map for validation
     const auto& edge_map = m.edge_ind_map();
     for (index_t i = 0; i < edges.size(); ++i) {
         const auto& [u, v] = edges[i];
@@ -73,7 +74,7 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
         }
     }
 
-    // Track valid vertices and edges
+    // track valid vertices and edges
     std::vector<bool> valid_vertices(m.n_vertices(), true);
     std::vector<bool> valid_edges(m.n_edges(), true);
     index_t current_vertices = m.n_vertices();
@@ -89,7 +90,7 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
             continue;
         }
 
-        // Collapse u -> v
+        // collapse u -> v
         valid_vertices[u] = false;
         valid_edges[edge_idx] = false;
         --current_vertices;
@@ -98,7 +99,7 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
         m.vertices()[v] = vector::scalar_multiply(
             vector::operator+(m.vertices()[u], m.vertices()[v]), 0.5);
 
-        // Update faces, removing degenerates
+        // update faces, removing degenerates
         std::vector<mesh::face> new_faces;
         for (const auto& f : m.faces()) {
             mesh::face new_f = f;
@@ -109,9 +110,10 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
                 new_faces.push_back(new_f);
             }
         }
+        
         m.faces() = std::move(new_faces);
 
-        // Rebuild edges and adjacency using edge_ind_map and adjacency
+        // rebuild edges and adjacency using edge_ind_map and adjacency
         m.edges().clear();
         m.edge_ind_map().clear();
         m.adjacency().clear();
@@ -136,7 +138,7 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
             }
         }
 
-        // Update costs for affected edges using incident_edges
+        // update costs for affected edges using incident_edges
         pq = std::priority_queue<cost_t, std::vector<cost_t>, std::greater<cost_t>>();
         valid_edges.assign(m.n_edges(), true);
         costs.resize(m.n_edges());
@@ -148,13 +150,14 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
             const auto& [u2, v2] = m.edges()[i];
             if (valid_vertices[u2] && valid_vertices[v2]) {
                 pq.push({costs[i], i});
-            } else {
+            } 
+            else {
                 valid_edges[i] = false;
             }
         }
     }
 
-    // Compact vertices
+    // compact vertices
     std::vector<mesh::vertex> new_vertices;
     std::vector<index_t> old_to_new(m.n_vertices(), 0);
     index_t new_idx = 0;
@@ -164,14 +167,16 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
             old_to_new[i] = new_idx++;
         }
     }
+    
     m.vertices() = std::move(new_vertices);
 
-    // Update faces and rebuild edges
+    // update faces and rebuild edges
     for (auto& f : m.faces()) {
         f[0] = old_to_new[f[0]];
         f[1] = old_to_new[f[1]];
         f[2] = old_to_new[f[2]];
     }
+    
     m.edges().clear();
     m.edge_ind_map().clear();
     m.adjacency().clear();
@@ -212,14 +217,14 @@ void simplify_random_removal(mesh& m, index_t target_vertices) {
         throw std::invalid_argument("simplify_random_removal: target exceeds vertices");
     }
 
-    // Sample vertices to remove using mesh::sample_vertices
+    // sample vertices to remove using mesh::sample_vertices
     auto indices = m.sample_vertices(m.n_vertices() - target_vertices);
     std::vector<bool> valid_vertices(m.n_vertices(), true);
     for (index_t idx : indices) {
         valid_vertices[idx] = false;
     }
 
-    // Update faces, keeping only those with valid vertices
+    // update faces, keeping only those with valid vertices
     std::vector<mesh::face> new_faces;
     for (const auto& f : m.faces()) {
         if (valid_vertices[f[0]] && valid_vertices[f[1]] && valid_vertices[f[2]]) {
@@ -229,7 +234,7 @@ void simplify_random_removal(mesh& m, index_t target_vertices) {
     
     m.faces() = std::move(new_faces);
 
-    // Compact vertices
+    // compact vertices
     std::vector<mesh::vertex> new_vertices;
     std::vector<index_t> old_to_new(m.n_vertices(), 0);
     index_t new_idx = 0;
@@ -242,7 +247,7 @@ void simplify_random_removal(mesh& m, index_t target_vertices) {
 
     m.vertices() = std::move(new_vertices);
 
-    // Update faces with new indices and rebuild edges
+    // update faces with new indices and rebuild edges
     for (auto& f : m.faces()) {
         f[0] = old_to_new[f[0]];
         f[1] = old_to_new[f[1]];
