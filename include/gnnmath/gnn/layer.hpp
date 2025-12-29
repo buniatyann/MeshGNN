@@ -7,7 +7,9 @@
 #include <vector>
 
 namespace gnnmath {
-using vector = gnnmath::vector;
+
+// Type alias for feature vectors
+using feature_vec = gnnmath::vector::vector;
 
 namespace gnn {
 
@@ -22,7 +24,7 @@ public:
     /// @param adj Adjacency matrix in CSR format.
     /// @return Output node features.
     /// @throws std::runtime_error If dimensions are incompatible.
-    virtual std::vector<vector> forward(const std::vector<vector>& features,
+    virtual std::vector<feature_vec> forward(const std::vector<feature_vec>& features,
                                        const matrix::sparse_matrix& adj) const = 0;
 
     /// @brief Returns the input feature dimension.
@@ -52,7 +54,7 @@ public:
     /// @param adj Adjacency matrix.
     /// @return Output node features.
     /// @throws std::runtime_error If dimensions mismatch or result is non-finite.
-    std::vector<vector> forward(const std::vector<vector>& features,
+    std::vector<feature_vec> forward(const std::vector<feature_vec>& features,
                                const matrix::sparse_matrix& adj) const override;
 
     /// @brief Returns input feature dimension.
@@ -69,13 +71,13 @@ public:
 
     /// @brief Accesses bias for training.
     /// @return Reference to bias vector.
-    vector& bias() { return bias_; }
+    feature_vec& bias() { return bias_; }
 
 private:
     std::size_t in_dim_;           ///< Input feature dimension.
     std::size_t out_dim_;          ///< Output feature dimension.
     matrix::dense_matrix weights_; ///< Weight matrix (in_dim x out_dim).
-    vector bias_;                  ///< Bias vector (out_dim).
+    feature_vec bias_;             ///< Bias vector (out_dim).
     activation_type activation_;   ///< Activation function type.
 };
 
@@ -94,7 +96,7 @@ public:
     /// @param adj Adjacency matrix.
     /// @return Output node features.
     /// @throws std::runtime_error If dimensions mismatch or result is non-finite.
-    std::vector<vector> forward(const std::vector<vector>& features,
+    std::vector<feature_vec> forward(const std::vector<feature_vec>& features,
                                const matrix::sparse_matrix& adj) const override;
 
     /// @brief Returns input feature dimension.
@@ -111,13 +113,13 @@ public:
 
     /// @brief Accesses bias for training.
     /// @return Reference to bias vector.
-    vector& bias() { return bias_; }
+    feature_vec& bias() { return bias_; }
 
 private:
     std::size_t in_dim_;           ///< Input feature dimension.
     std::size_t out_dim_;          ///< Output feature dimension.
     matrix::dense_matrix weights_; ///< Weight matrix (in_dim x out_dim).
-    vector bias_;                  ///< Bias vector (out_dim).
+    feature_vec bias_;             ///< Bias vector (out_dim).
     activation_type activation_;   ///< Activation function type.
 };
 

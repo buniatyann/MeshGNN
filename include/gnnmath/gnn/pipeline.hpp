@@ -8,6 +8,8 @@
 
 #include <memory>
 #include <vector>
+#include <string>
+#include <fstream>
 
 namespace gnnmath {
 namespace gnn {
@@ -27,14 +29,14 @@ public:
     /// @param mesh Input mesh.
     /// @return Node features after processing.
     /// @throws std::runtime_error If mesh is invalid or pipeline is empty.
-    std::vector<vector> process(const mesh::mesh& mesh) const;
+    std::vector<feature_vec> process(const mesh::mesh& mesh) const;
 
     /// @brief Processes features directly with an adjacency matrix.
     /// @param features Input node features.
     /// @param adj Adjacency matrix.
     /// @return Output node features.
     /// @throws std::runtime_error If inputs are invalid.
-    std::vector<vector> process(const std::vector<vector>& features,
+    std::vector<feature_vec> process(const std::vector<feature_vec>& features,
                                const matrix::sparse_matrix& adj) const;
 
     /// @brief Returns the number of layers in the pipeline.
@@ -44,6 +46,16 @@ public:
     /// @brief Accesses layers for training.
     /// @return Const reference to layer pointers.
     const std::vector<std::unique_ptr<layer>>& layers() const { return layers_; }
+
+    /// @brief Saves the pipeline weights to a binary file.
+    /// @param filename Path to save the model.
+    /// @throws std::runtime_error If file cannot be opened.
+    void save(const std::string& filename) const;
+
+    /// @brief Loads pipeline weights from a binary file.
+    /// @param filename Path to load the model from.
+    /// @throws std::runtime_error If file cannot be opened or format is invalid.
+    void load(const std::string& filename);
 
 private:
     std::vector<std::unique_ptr<layer>> layers_; ///< List of GNN layers.
