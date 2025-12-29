@@ -1,4 +1,4 @@
-#include "../include/gnnmath/mesh.hpp"
+#include <gnnmath/mesh.hpp>
 #include <fstream>
 #include <sstream>
 #include <algorithm>

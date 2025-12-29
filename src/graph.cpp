@@ -1,4 +1,4 @@
-#include "../include/gnnmath/graph.hpp"
+#include <gnnmath/graph.hpp>
 #include <algorithm>
 #include <execution>
 #include <numeric>
@@ -128,22 +128,12 @@ feature_vector message_passing(
     feature_vector result(graph.num_vertices,
         messages.empty() ? vector() : vector(messages[0].size(), 0.0));
     
-    std::vector<std::vector<vector>> local_results(graph.num_vertices, 
-        messages.empty() ? std::vector<vector>() : std::vector<vector>(1, vector(messages[0].size(), 0.0)));
-    
-    std::for_each(std::execution::par_unseq, graph.edges.begin(), graph.edges.end(),
-                  [&](const auto& edge) {
-                      auto [u, v] = edge;
-                      std::size_t edge_idx = &edge - graph.edges.data();
-                      auto weighted_msg = gnnmath::vector::scalar_multiply(messages[edge_idx], edge_weights[edge_idx]);
-                      local_results[u][0] = gnnmath::vector::operator+(local_results[u][0], weighted_msg);
-                      local_results[v][0] = gnnmath::vector::operator+(local_results[v][0], weighted_msg);
-                  });
-    
-    for (std::size_t i = 0; i < graph.num_vertices; ++i) {
-        if (!local_results[i].empty()) {
-            result[i] = local_results[i][0];
-        }
+    // Process sequentially to avoid race conditions when multiple edges update the same vertex
+    for (std::size_t edge_idx = 0; edge_idx < graph.edges.size(); ++edge_idx) {
+        auto [u, v] = graph.edges[edge_idx];
+        auto weighted_msg = gnnmath::vector::scalar_multiply(messages[edge_idx], edge_weights[edge_idx]);
+        result[u] = gnnmath::vector::operator+(result[u], weighted_msg);
+        result[v] = gnnmath::vector::operator+(result[v], weighted_msg);
     }
     
     return result;

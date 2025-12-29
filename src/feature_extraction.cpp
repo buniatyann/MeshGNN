@@ -1,7 +1,7 @@
-#include "../include/gnnmath/mesh.hpp"
-#include "../include/gnnmath/vector.hpp"
-#include "../include/gnnmath/random.hpp"
-#include "../include/gnnmath/feature_extraction.hpp"
+#include <gnnmath/mesh.hpp>
+#include <gnnmath/vector.hpp>
+#include <gnnmath/random.hpp>
+#include <gnnmath/feature_extraction.hpp>
 #include <vector>
 #include <stdexcept>
 #include <cmath>

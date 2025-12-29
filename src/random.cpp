@@ -1,4 +1,4 @@
-#include "../include/gnnmath/random.hpp"
+#include <gnnmath/core/random.hpp>
 #include <limits>
 #include <stdexcept>
 #include <thread>

@@ -1,4 +1,4 @@
-#include "../include/gnnmath/vector.hpp"
+#include <gnnmath/math/vector.hpp>
 #include <cmath>
 #include <algorithm>
 #include <execution>
@@ -124,8 +124,9 @@ namespace vector {
                        [](double x) { return std::exp(std::min(x, 700.0)); });
         // Compute sum of exp(x)
         double sum = std::accumulate(ans.begin(), ans.end(), 0.0);
-        if (sum == 0.0) {
-            throw std::runtime_error("Softmax: sum of exponentials is zero");
+        constexpr double epsilon = 1e-10;
+        if (sum < epsilon) {
+            throw std::runtime_error("Softmax: sum of exponentials is too small");
         }
         
         std::transform(std::execution::par_unseq, ans.begin(), ans.end(), ans.begin(),

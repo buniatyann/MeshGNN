@@ -1,4 +1,5 @@
-#include "../include/gnnmath/matrix.hpp"
+#include <gnnmath/math/dense_matrix.hpp>
+#include <gnnmath/math/sparse_matrix.hpp>
 #include <numeric>
 #include <cmath>
 #include <algorithm>
@@ -174,7 +175,9 @@ sparse_matrix sparse_matrix::operator+(const sparse_matrix& rhs) const {
             
             if (std::abs(val) > 1e-10) {
                 result.vals.push_back(val);
-                result.col_ind.push_back(std::min(col_j, col_k));
+                // Use the actual column index that was processed
+                std::size_t actual_col = (col_j <= col_k) ? col_j : col_k;
+                result.col_ind.push_back(actual_col);
             }
         }
 
@@ -218,7 +221,9 @@ sparse_matrix sparse_matrix::operator-(const sparse_matrix& rhs) const {
             
             if (std::abs(val) > 1e-10) {
                 result.vals.push_back(val);
-                result.col_ind.push_back(std::min(col_j, col_k));
+                // Use the actual column index that was processed
+                std::size_t actual_col = (col_j <= col_k) ? col_j : col_k;
+                result.col_ind.push_back(actual_col);
             }
         }
 
