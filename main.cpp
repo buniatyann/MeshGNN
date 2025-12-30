@@ -1,20 +1,17 @@
-#include "include/gnnmath/mesh.hpp" // mesh
-#include "include/gnnmath/feature_extraction.hpp"
-#include "include/gnnmath/mesh_processor.hpp"
-#include "include/gnnmath/vector.hpp"
+#include <gnnmath/geometry/mesh.hpp>
+#include <gnnmath/geometry/features.hpp>
+#include <gnnmath/geometry/mesh_processor.hpp>
+#include <gnnmath/math/vector.hpp>
 #include <iostream>
 #include <string>
 #include <stdexcept>
 
 int main(int argc, char* argv[]) {
     std::string filename;
-
-    // Check for command-line argument
     if (argc > 1) {
         filename = argv[1];
     } 
     else {
-        // Prompt user for file name
         std::cout << "Enter path to OBJ file (e.g., data/tetrahedron.obj): ";
         std::getline(std::cin, filename);
         if (filename.empty()) {
@@ -24,7 +21,6 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        // Load mesh
         gnnmath::mesh::mesh m;
         m.load_obj(filename);
         if (!m.is_valid()) {
@@ -33,14 +29,12 @@ int main(int argc, char* argv[]) {
         std::cout << "Loaded mesh with " << m.n_vertices() << " vertices, "
                   << m.n_edges() << " edges, " << m.n_faces() << " faces\n";
 
-        // Extract Gaussian curvature
         auto curvatures = gnnmath::mesh::compute_gaussian_curvature(m);
         std::cout << "Computed " << curvatures.size() << " Gaussian curvatures\n";
         if (!curvatures.empty()) {
             std::cout << "Sample curvature (vertex 0): " << curvatures[0] << "\n";
         }
 
-        // Extract combined node features (coordinates, normals, curvature)
         std::vector<gnnmath::vector::vector> node_features = gnnmath::mesh::compute_combined_node_features(m);
         std::cout << "Extracted " << node_features.size() << " node features (dimension: "
                   << (node_features.empty() ? 0 : node_features[0].size()) << ")\n";
@@ -59,7 +53,6 @@ int main(int argc, char* argv[]) {
         std::cout << "Extracted " << edge_features.size() << " edge features (dimension: "
                   << (edge_features.empty() ? 0 : edge_features[0].size()) << ")\n";
 
-        // Compute quadric error for a sample edge (if edges exist)
         if (m.n_edges() > 0) {
             auto edges = m.edges();
             auto [u, v] = edges[0]; // First edge
@@ -67,7 +60,6 @@ int main(int argc, char* argv[]) {
             std::cout << "Quadric error for edge (" << u << ", " << v << "): " << error << "\n";
         }
 
-        // Simplify mesh
         std::size_t target_vertices = m.n_vertices() / 2;
         gnnmath::mesh::simplify_random_removal(m, target_vertices);
         std::cout << "Simplified mesh to " << m.n_vertices() << " vertices\n";
