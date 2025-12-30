@@ -25,7 +25,8 @@ MeshGNN bridges the gap between geometric processing and deep learning by treati
 - OBJ file loading and mesh representation
 - Geometric feature extraction (curvature, normals)
 - Graph Convolutional Network (GCN) and EdgeConv layers
-- SGD and Adam optimizers with L2 regularization
+- Modular optimizer system (SGD, Adam) with L2 regularization
+- Modular loss function system (MSE, Cross-Entropy)
 - Incremental edge collapse mesh simplification
 - Model serialization (save/load)
 
@@ -172,46 +173,74 @@ When collapsing edge (u, v):
 
 ```
 MeshGNN/
-├── include/gnnmath/           # Header files
-│   ├── types.hpp              # Type aliases (scalar_t, index_t)
-│   ├── vector.hpp             # Vector operations and activations
-│   ├── matrix.hpp             # Dense and sparse matrix operations
-│   ├── mesh.hpp               # Mesh representation
-│   ├── graph.hpp              # Graph data structure
-│   ├── feature_extraction.hpp # Geometric feature computation
-│   ├── mesh_processor.hpp     # Mesh simplification algorithms
-│   ├── random.hpp             # Random number utilities
-│   └── gnn/
-│       ├── layer.hpp          # GCN and EdgeConv layers
-│       ├── pipeline.hpp       # Layer stacking and model I/O
-│       └── training.hpp       # Trainer with optimizers and losses
+├── include/gnnmath/              # Header files
+│   ├── core/                     # Core utilities
+│   │   ├── config.hpp            # Library configuration and version
+│   │   ├── types.hpp             # Type aliases (scalar_t, index_t)
+│   │   └── random.hpp            # Random number utilities
+│   │
+│   ├── math/                     # Mathematical primitives
+│   │   ├── vector.hpp            # Vector operations and activations
+│   │   ├── dense_matrix.hpp      # Dense matrix operations
+│   │   └── sparse_matrix.hpp     # CSR sparse matrix operations
+│   │
+│   ├── geometry/                 # 3D geometry processing
+│   │   ├── mesh.hpp              # Mesh representation and I/O
+│   │   ├── mesh_processor.hpp    # Mesh simplification algorithms
+│   │   └── features.hpp          # Geometric feature extraction
+│   │
+│   ├── gnn/                      # Graph Neural Network components
+│   │   ├── layer.hpp             # GCN and EdgeConv layers
+│   │   ├── pipeline.hpp          # Layer stacking and model I/O
+│   │   ├── training.hpp          # Trainer class
+│   │   ├── optimizers/           # Optimizer implementations
+│   │   │   ├── optimizer.hpp     # Abstract optimizer interface
+│   │   │   ├── sgd.hpp           # SGD optimizer
+│   │   │   └── adam.hpp          # Adam optimizer
+│   │   └── losses/               # Loss function implementations
+│   │       ├── loss.hpp          # Abstract loss interface
+│   │       ├── mse.hpp           # Mean Squared Error loss
+│   │       └── cross_entropy.hpp # Cross-Entropy loss
+│   │
+│   └── graph.hpp                 # Graph data structure
 │
-├── src/                       # Implementation files
-│   ├── vector.cpp
-│   ├── matrix.cpp
-│   ├── mesh.cpp
-│   ├── graph.cpp
-│   ├── feature_extraction.cpp
-│   ├── mesh_processor.cpp
-│   ├── random.cpp
-│   └── gnn/
-│       ├── layer.cpp
-│       ├── pipeline.cpp
-│       └── training.cpp
+├── src/                          # Implementation files
+│   ├── core/
+│   │   └── random.cpp
+│   ├── math/
+│   │   ├── vector.cpp
+│   │   └── matrix.cpp
+│   ├── geometry/
+│   │   ├── mesh.cpp
+│   │   ├── mesh_processor.cpp
+│   │   └── feature_extraction.cpp
+│   ├── gnn/
+│   │   ├── layer.cpp
+│   │   ├── pipeline.cpp
+│   │   ├── training.cpp
+│   │   ├── optimizers/
+│   │   │   ├── optimizer.cpp
+│   │   │   ├── sgd.cpp
+│   │   │   └── adam.cpp
+│   │   └── losses/
+│   │       ├── loss.cpp
+│   │       ├── mse.cpp
+│   │       └── cross_entropy.cpp
+│   └── graph.cpp
 │
-├── tests/                     # Unit tests (Google Test)
+├── tests/                        # Unit tests (Google Test)
 │   ├── test_vector.cpp
 │   ├── test_matrix.cpp
 │   ├── test_mesh.cpp
 │   └── test_gnn.cpp
 │
-├── data/                      # Sample mesh files
+├── data/                         # Sample mesh files
 │   └── Porsche_911_GT2.obj
 │
-├── main.cpp                   # Demo application
-├── CMakeLists.txt             # Build configuration
-├── CLAUDE.md                  # Claude Code guidance
-└── README.md                  # This file
+├── main.cpp                      # Demo application
+├── CMakeLists.txt                # Build configuration
+├── CLAUDE.md                     # Claude Code guidance
+└── README.md                     # This file
 ```
 
 ## Building
@@ -242,7 +271,15 @@ ctest --output-on-failure
 ### Manual Compilation
 
 ```bash
-g++ -std=c++17 -O2 -I include main.cpp src/*.cpp src/gnn/*.cpp -o meshgnn
+g++ -std=c++17 -O2 -I include main.cpp \
+    src/core/*.cpp \
+    src/math/*.cpp \
+    src/geometry/*.cpp \
+    src/gnn/*.cpp \
+    src/gnn/optimizers/*.cpp \
+    src/gnn/losses/*.cpp \
+    src/graph.cpp \
+    -o meshgnn
 ```
 
 ## Usage
@@ -250,8 +287,8 @@ g++ -std=c++17 -O2 -I include main.cpp src/*.cpp src/gnn/*.cpp -o meshgnn
 ### Basic Example
 
 ```cpp
-#include <gnnmath/mesh.hpp>
-#include <gnnmath/feature_extraction.hpp>
+#include <gnnmath/geometry/mesh.hpp>
+#include <gnnmath/geometry/features.hpp>
 #include <gnnmath/gnn/pipeline.hpp>
 #include <gnnmath/gnn/layer.hpp>
 #include <gnnmath/gnn/training.hpp>
@@ -268,16 +305,16 @@ int main() {
     auto adj = m.to_adjacency_matrix();
 
     // Create GNN pipeline
-    gnn::pipeline pipeline;
-    pipeline.add_layer(std::make_unique<gnn::gcn_layer>(7, 16));
-    pipeline.add_layer(std::make_unique<gnn::gcn_layer>(16, 8));
-    pipeline.add_layer(std::make_unique<gnn::edge_conv_layer>(8, 1));
+    auto pipeline = std::make_shared<gnn::pipeline>();
+    pipeline->add_layer(std::make_unique<gnn::gcn_layer>(7, 16));
+    pipeline->add_layer(std::make_unique<gnn::gcn_layer>(16, 8));
+    pipeline->add_layer(std::make_unique<gnn::edge_conv_layer>(8, 1));
 
     // Process through GNN
-    auto output = pipeline.process(node_features, adj);
+    auto output = pipeline->process(node_features, adj);
 
     // Save trained model
-    pipeline.save("model.bin");
+    pipeline->save("model.bin");
 
     return 0;
 }
@@ -286,22 +323,43 @@ int main() {
 ### Training Example
 
 ```cpp
-// Create trainer with Adam optimizer and weight decay
-gnn::trainer trainer(&pipeline, 0.001, gnn::optimizer_type::ADAM, 0.0001);
+// Create trainer with shared_ptr pipeline and Adam optimizer
+auto pipeline = std::make_shared<gnn::pipeline>();
+// ... add layers ...
+
+gnn::trainer trainer(pipeline, 0.001, gnn::optimizer_type::ADAM, 0.0001);
 
 // Training loop
 for (int epoch = 0; epoch < 100; ++epoch) {
     trainer.train_step(features, adj, targets);
 
-    auto predictions = pipeline.process(features, adj);
-    double loss = trainer.mse_loss(predictions, targets);
+    auto predictions = pipeline->process(features, adj);
+    double loss = trainer.compute_loss(predictions, targets);
     std::cout << "Epoch " << epoch << " Loss: " << loss << std::endl;
 }
+```
+
+### Custom Optimizer and Loss
+
+```cpp
+// Create custom optimizer and loss function
+auto optimizer = std::make_unique<gnn::adam_optimizer>(0.001, 0.0001);
+auto loss = std::make_unique<gnn::cross_entropy_loss>();
+
+// Create trainer with custom components
+gnn::trainer trainer(pipeline, std::move(optimizer), std::move(loss));
+
+// Or use factory functions
+auto opt = gnn::create_optimizer("adam", 0.001, 0.0001);
+auto loss_fn = gnn::create_loss("cross_entropy");
 ```
 
 ### Mesh Simplification
 
 ```cpp
+#include <gnnmath/geometry/mesh.hpp>
+#include <gnnmath/geometry/mesh_processor.hpp>
+
 // Simplify to 50% of original vertices using GNN scores
 std::vector<double> gnn_scores = /* from GNN output */;
 mesh::simplify_gnn_edge_collapse(m, m.n_vertices() / 2, gnn_scores);
@@ -311,6 +369,23 @@ mesh::simplify_random_removal(m, target_vertices);
 ```
 
 ## API Reference
+
+### Module Includes
+
+| Module | Include Path | Description |
+|--------|--------------|-------------|
+| Core Types | `<gnnmath/core/types.hpp>` | scalar_t, index_t aliases |
+| Random | `<gnnmath/core/random.hpp>` | Random number generation |
+| Vector | `<gnnmath/math/vector.hpp>` | Vector operations, activations |
+| Dense Matrix | `<gnnmath/math/dense_matrix.hpp>` | Dense matrix class |
+| Sparse Matrix | `<gnnmath/math/sparse_matrix.hpp>` | CSR sparse matrix |
+| Mesh | `<gnnmath/geometry/mesh.hpp>` | Mesh class, OBJ loading |
+| Features | `<gnnmath/geometry/features.hpp>` | Curvature, normals |
+| GNN Layers | `<gnnmath/gnn/layer.hpp>` | GCN, EdgeConv layers |
+| Pipeline | `<gnnmath/gnn/pipeline.hpp>` | Layer stacking |
+| Training | `<gnnmath/gnn/training.hpp>` | Trainer class |
+| Optimizers | `<gnnmath/gnn/optimizers/*.hpp>` | SGD, Adam |
+| Losses | `<gnnmath/gnn/losses/*.hpp>` | MSE, Cross-Entropy |
 
 ### Activation Functions
 
@@ -324,19 +399,18 @@ mesh::simplify_random_removal(m, target_vertices);
 
 ### Loss Functions
 
-| Function | Formula | Use Case |
-|----------|---------|----------|
-| MSE | Σ(y-ŷ)²/N | Regression tasks |
-| Cross-Entropy | -Σy·log(ŷ) | Classification tasks |
+| Class | Formula | Use Case |
+|-------|---------|----------|
+| `mse_loss` | Σ(y-ŷ)²/N | Regression tasks |
+| `cross_entropy_loss` | -Σy·log(ŷ) | Classification tasks |
 
 ### Optimizers
 
-| Optimizer | Features |
-|-----------|----------|
-| SGD | Basic gradient descent with optional weight decay |
-| Adam | Adaptive learning rates with momentum (β₁=0.9, β₂=0.999) |
+| Class | Features |
+|-------|----------|
+| `sgd_optimizer` | Basic gradient descent with optional weight decay |
+| `adam_optimizer` | Adaptive learning rates with momentum (β₁=0.9, β₂=0.999) |
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
-
