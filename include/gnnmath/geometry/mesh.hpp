@@ -16,7 +16,6 @@
 namespace gnnmath {
 namespace mesh {
 
-// Forward declaration
 struct obj_data;
 struct obj_load_options;
 
@@ -31,14 +30,19 @@ class mesh {
 public:
     /// @brief Type alias for a vertex, represented as a vector of coordinates (x, y, z).
     using vertex = gnnmath::vector::vector;
+
     /// @brief Type alias for an edge, represented as a pair of vertex indices (u, v).
     using edge = std::pair<std::size_t, std::size_t>;
+
     /// @brief Type alias for a face, represented as three vertex indices forming a triangle.
     using face = std::array<std::size_t, 3>;
+
     /// @brief Type alias for texture coordinate (u, v).
     using texcoord = std::array<scalar_t, 2>;
+
     /// @brief Type alias for a normal vector (x, y, z).
     using normal = std::array<scalar_t, 3>;
+
     /// @brief Face with per-vertex attributes (vertex_idx, texcoord_idx, normal_idx)
     struct face_with_attrs {
         std::array<std::size_t, 3> vertex_indices;
@@ -141,6 +145,7 @@ private:
         std::size_t operator()(const std::pair<std::size_t, std::size_t>& p) const {
             auto h1 = std::hash<std::size_t>{}(p.first);
             auto h2 = std::hash<std::size_t>{}(p.second);
+
             return h1 ^ (h2 << 1);
         }
     };
@@ -285,30 +290,37 @@ public:
      */
     void validate() const;
 
+public:
+    friend void simplify_gnn_edge_collapse(mesh&, index_t, const std::vector<scalar_t>&);
+    friend void simplify_random_removal(mesh&, index_t);
+
 private:
     /// @brief List of vertices, each storing 3D coordinates.
     std::vector<vertex> vertices_;
+
     /// @brief List of edges, each as a pair of vertex indices.
     std::vector<edge> edges_;
+    
     /// @brief List of triangular faces, each as three vertex indices.
     std::vector<face> faces_;
+    
     /// @brief Texture coordinates loaded from file.
     std::vector<texcoord> texcoords_;
+    
     /// @brief Normals loaded from file.
     std::vector<normal> file_normals_;
+    
     /// @brief Faces with full attribute indices (texcoord and normal per vertex).
     std::vector<face_with_attrs> faces_with_attrs_;
+    
     /// @brief Adjacency map: vertex index to list of neighbor vertex indices.
     std::unordered_map<std::size_t, std::vector<std::size_t>> adjacency_;
+    
     /// @brief Incident edges map: vertex index to list of incident edge indices.
     std::unordered_map<std::size_t, std::vector<std::size_t>> incident_edges_;
+    
     /// @brief Edge index map: (u, v) pair to edge index in edges_.
     std::unordered_map<std::pair<std::size_t, std::size_t>, std::size_t, pair_hash> edge_index_map_;
-
-public:
-    // Friend functions for direct access
-    friend void simplify_gnn_edge_collapse(mesh&, index_t, const std::vector<scalar_t>&);
-    friend void simplify_random_removal(mesh&, index_t);
 };
 
 } // namespace mesh
