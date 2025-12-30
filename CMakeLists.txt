@@ -16,18 +16,34 @@ endif()
 # Find TBB for parallel execution policies (required for std::execution)
 find_package(TBB QUIET)
 
-# Library sources
+# Library sources - organized by module
 set(MESHGNN_SOURCES
-    src/vector.cpp
-    src/matrix.cpp
-    src/mesh.cpp
+    # Core module
+    src/core/random.cpp
+
+    # Math module
+    src/math/vector.cpp
+    src/math/matrix.cpp
+
+    # Geometry module
+    src/geometry/mesh.cpp
+    src/geometry/mesh_processor.cpp
+    src/geometry/feature_extraction.cpp
+    src/geometry/obj_loader.cpp
+
+    # Graph module
     src/graph.cpp
-    src/random.cpp
-    src/feature_extraction.cpp
-    src/mesh_processor.cpp
+
+    # GNN module
     src/gnn/layer.cpp
     src/gnn/pipeline.cpp
     src/gnn/training.cpp
+    src/gnn/optimizers/optimizer.cpp
+    src/gnn/optimizers/sgd.cpp
+    src/gnn/optimizers/adam.cpp
+    src/gnn/losses/loss.cpp
+    src/gnn/losses/mse.cpp
+    src/gnn/losses/cross_entropy.cpp
 )
 
 # Create library
