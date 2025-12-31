@@ -23,7 +23,8 @@ set(MESHGNN_SOURCES
 
     # Math module
     src/math/vector.cpp
-    src/math/matrix.cpp
+    src/math/dense_matrix.cpp
+    src/math/sparse_matrix.cpp
 
     # Geometry module
     src/geometry/mesh.cpp
@@ -35,7 +36,8 @@ set(MESHGNN_SOURCES
     src/graph.cpp
 
     # GNN module
-    src/gnn/layer.cpp
+    src/gnn/layers/gcn_layer.cpp
+    src/gnn/layers/edge_conv_layer.cpp
     src/gnn/pipeline.cpp
     src/gnn/training.cpp
     src/gnn/optimizers/optimizer.cpp
