@@ -15,6 +15,7 @@ A C++17 library implementing Graph Neural Networks (GNNs) for 3D mesh simplifica
 - [Building](#building)
 - [Usage](#usage)
 - [API Reference](#api-reference)
+- [Contributing](#contributing)
 - [License](#license)
 
 ## Overview
@@ -415,6 +416,42 @@ mesh::simplify_random_removal(m, target_vertices);
 |-------|----------|
 | `sgd_optimizer` | Basic gradient descent with optional weight decay |
 | `adam_optimizer` | Adaptive learning rates with momentum (β₁=0.9, β₂=0.999) |
+
+## Contributing
+
+Contributions are welcome! Whether you're fixing bugs, adding features, improving documentation, or suggesting ideas, your help is appreciated.
+
+### How to Contribute
+
+1. **Fork the repository** and create your branch from `main`
+2. **Make your changes** following the existing code style
+3. **Add tests** for any new functionality
+4. **Ensure all tests pass** by running `ctest --output-on-failure`
+5. **Submit a pull request** with a clear description of your changes
+
+### Areas for Contribution
+
+- **New GNN layers**: Implement additional layer types (GAT, GraphSAGE, etc.)
+- **Optimization**: Improve performance with SIMD, better parallelization, or GPU support
+- **File formats**: Add support for additional mesh formats (PLY, STL, OFF)
+- **Visualization**: Create tools for visualizing meshes and GNN outputs
+- **Documentation**: Improve examples, tutorials, and API documentation
+- **Testing**: Expand test coverage and add benchmarks
+
+### Code Style
+
+- Use C++17 features where appropriate
+- Follow the existing naming conventions (snake_case for functions/variables)
+- Keep functions focused and well-documented
+- Prefer clarity over cleverness
+
+### Reporting Issues
+
+Found a bug or have a feature request? Please open an issue with:
+- A clear description of the problem or suggestion
+- Steps to reproduce (for bugs)
+- Expected vs actual behavior
+- Your environment (compiler, OS, etc.)
 
 ## License
 
