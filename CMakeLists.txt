@@ -57,8 +57,8 @@ if(TBB_FOUND)
 endif()
 
 # Main executable
-add_executable(meshgnn_demo main.cpp)
-target_link_libraries(meshgnn_demo PRIVATE meshgnn)
+add_executable(meshgnn_lib main.cpp)
+target_link_libraries(meshgnn_lib PRIVATE meshgnn)
 
 # Testing
 option(MESHGNN_BUILD_TESTS "Build unit tests" ON)
