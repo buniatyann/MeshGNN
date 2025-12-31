@@ -40,7 +40,7 @@ sparse_matrix::sparse_matrix(const dense_matrix& rhs) {
 
 sparse_matrix::sparse_matrix(std::size_t rows, std::size_t cols, std::vector<double>&& values,
                              std::vector<std::size_t>&& col_indices, std::vector<std::size_t>&& row_ptrs)
-    : rows(rows), cols(cols), vals(std::move(values)), col_ind(std::move(col_indices)), row_ptr(std::move(row_ptrs)) {
+    : vals(std::move(values)), col_ind(std::move(col_indices)), row_ptr(std::move(row_ptrs)), rows(rows), cols(cols) {
     validate();
 }
 
