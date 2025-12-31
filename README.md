@@ -244,7 +244,6 @@ MeshGNN/
 │
 ├── main.cpp                      # Demo application
 ├── CMakeLists.txt                # Build configuration
-├── CLAUDE.md                     # Claude Code guidance
 └── README.md                     # This file
 ```
 
