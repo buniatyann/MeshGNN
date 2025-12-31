@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include <gnnmath/vector.hpp>
+#include <gnnmath/math/vector.hpp>
 #include <cmath>
 
 using namespace gnnmath::vector;

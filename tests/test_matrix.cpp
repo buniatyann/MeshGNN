@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
-#include <gnnmath/matrix.hpp>
+#include <gnnmath/math/dense_matrix.hpp>
+#include <gnnmath/math/sparse_matrix.hpp>
 #include <cmath>
 
 using namespace gnnmath::matrix;

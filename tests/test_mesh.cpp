@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include <gnnmath/mesh.hpp>
+#include <gnnmath/geometry/mesh.hpp>
 #include <cmath>
 
 using namespace gnnmath::mesh;

@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
-#include <gnnmath/gnn/layer.hpp>
+#include <gnnmath/gnn/layers/layer.hpp>
+#include <gnnmath/gnn/layers/gcn_layer.hpp>
+#include <gnnmath/gnn/layers/edge_conv_layer.hpp>
 #include <gnnmath/gnn/pipeline.hpp>
 #include <gnnmath/gnn/training.hpp>
-#include <gnnmath/matrix.hpp>
+#include <gnnmath/math/dense_matrix.hpp>
+#include <gnnmath/math/sparse_matrix.hpp>
 #include <cmath>
 
 using namespace gnnmath;
