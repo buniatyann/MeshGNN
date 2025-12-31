@@ -187,20 +187,23 @@ MeshGNN/
 │   ├── geometry/                 # 3D geometry processing
 │   │   ├── mesh.hpp              # Mesh representation and I/O
 │   │   ├── mesh_processor.hpp    # Mesh simplification algorithms
-│   │   └── features.hpp          # Geometric feature extraction
+│   │   └── feature_extraction.hpp # Geometric feature extraction
 │   │
 │   ├── gnn/                      # Graph Neural Network components
-│   │   ├── layer.hpp             # GCN and EdgeConv layers
-│   │   ├── pipeline.hpp          # Layer stacking and model I/O
-│   │   ├── training.hpp          # Trainer class
+│   │   ├── layers/               # Layer implementations
+│   │   │   ├── layer.hpp         # Abstract layer interface
+│   │   │   ├── gcn_layer.hpp     # GCN layer
+│   │   │   └── edge_conv_layer.hpp # EdgeConv layer
 │   │   ├── optimizers/           # Optimizer implementations
 │   │   │   ├── optimizer.hpp     # Abstract optimizer interface
 │   │   │   ├── sgd.hpp           # SGD optimizer
 │   │   │   └── adam.hpp          # Adam optimizer
-│   │   └── losses/               # Loss function implementations
-│   │       ├── loss.hpp          # Abstract loss interface
-│   │       ├── mse.hpp           # Mean Squared Error loss
-│   │       └── cross_entropy.hpp # Cross-Entropy loss
+│   │   ├── losses/               # Loss function implementations
+│   │   │   ├── loss.hpp          # Abstract loss interface
+│   │   │   ├── mse.hpp           # Mean Squared Error loss
+│   │   │   └── cross_entropy.hpp # Cross-Entropy loss
+│   │   ├── pipeline.hpp          # Layer stacking and model I/O
+│   │   └── training.hpp          # Trainer class
 │   │
 │   └── graph.hpp                 # Graph data structure
 │
@@ -215,7 +218,9 @@ MeshGNN/
 │   │   ├── mesh_processor.cpp
 │   │   └── feature_extraction.cpp
 │   ├── gnn/
-│   │   ├── layer.cpp
+│   │   ├── layers/
+│   │   │   ├── gcn_layer.cpp
+│   │   │   └── edge_conv_layer.cpp
 │   │   ├── pipeline.cpp
 │   │   ├── training.cpp
 │   │   ├── optimizers/
@@ -288,9 +293,10 @@ g++ -std=c++17 -O2 -I include main.cpp \
 
 ```cpp
 #include <gnnmath/geometry/mesh.hpp>
-#include <gnnmath/geometry/features.hpp>
+#include <gnnmath/geometry/feature_extraction.hpp>
 #include <gnnmath/gnn/pipeline.hpp>
-#include <gnnmath/gnn/layer.hpp>
+#include <gnnmath/gnn/layers/gcn_layer.hpp>
+#include <gnnmath/gnn/layers/edge_conv_layer.hpp>
 #include <gnnmath/gnn/training.hpp>
 
 using namespace gnnmath;
@@ -380,8 +386,8 @@ mesh::simplify_random_removal(m, target_vertices);
 | Dense Matrix | `<gnnmath/math/dense_matrix.hpp>` | Dense matrix class |
 | Sparse Matrix | `<gnnmath/math/sparse_matrix.hpp>` | CSR sparse matrix |
 | Mesh | `<gnnmath/geometry/mesh.hpp>` | Mesh class, OBJ loading |
-| Features | `<gnnmath/geometry/features.hpp>` | Curvature, normals |
-| GNN Layers | `<gnnmath/gnn/layer.hpp>` | GCN, EdgeConv layers |
+| Features | `<gnnmath/geometry/feature_extraction.hpp>` | Curvature, normals |
+| GNN Layers | `<gnnmath/gnn/layers/*.hpp>` | GCN, EdgeConv layers |
 | Pipeline | `<gnnmath/gnn/pipeline.hpp>` | Layer stacking |
 | Training | `<gnnmath/gnn/training.hpp>` | Trainer class |
 | Optimizers | `<gnnmath/gnn/optimizers/*.hpp>` | SGD, Adam |
