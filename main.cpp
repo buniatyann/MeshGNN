@@ -1,5 +1,5 @@
 #include <gnnmath/geometry/mesh.hpp>
-#include <gnnmath/geometry/features.hpp>
+#include <gnnmath/geometry/feature_extraction.hpp>
 #include <gnnmath/geometry/mesh_processor.hpp>
 #include <gnnmath/math/vector.hpp>
 #include <iostream>
