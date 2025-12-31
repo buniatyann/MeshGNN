@@ -1,9 +1,10 @@
 #ifndef GRAPH_HPP
 #define GRAPH_HPP
 
-#include "vector.hpp"
-#include "matrix.hpp"
-#include "mesh.hpp"
+#include "math/vector.hpp"
+#include "math/dense_matrix.hpp"
+#include "math/sparse_matrix.hpp"
+#include "geometry/mesh.hpp"
 #include <vector>
 #include <unordered_map>
 #include <stdexcept>
