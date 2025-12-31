@@ -1,9 +1,16 @@
 #ifndef GNNMATH_GNN_TRAINING_HPP
 #define GNNMATH_GNN_TRAINING_HPP
 
-#include "../vector.hpp"
-#include "../matrix.hpp"
+#include "../math/vector.hpp"
+#include "../math/dense_matrix.hpp"
+#include "../math/sparse_matrix.hpp"
 #include "pipeline.hpp"
+#include "optimizers/optimizer.hpp"
+#include "optimizers/sgd.hpp"
+#include "optimizers/adam.hpp"
+#include "losses/loss.hpp"
+#include "losses/mse.hpp"
+#include "losses/cross_entropy.hpp"
 #include <vector>
 #include <functional>
 #include <unordered_map>
@@ -14,32 +21,39 @@
 namespace gnnmath {
 namespace gnn {
 
-// Type alias for feature vector (std::vector<double>)
 using feature_vec = gnnmath::vector::vector;
 
-/// @brief Optimizer types
+/// @brief Optimizer types (for backward compatibility)
 enum class optimizer_type { SGD, ADAM };
-
-/// @brief Adam optimizer state for a parameter
-struct adam_state {
-    std::optional<matrix::dense_matrix> m_weights;  ///< First moment for weights
-    std::optional<matrix::dense_matrix> v_weights;  ///< Second moment for weights
-    feature_vec m_bias;                             ///< First moment for bias
-    feature_vec v_bias;                             ///< Second moment for bias
-    std::size_t t = 0;                              ///< Timestep
-
-    adam_state() = default;
-};
 
 /// @brief Trainer for optimizing GNN pipelines.
 class trainer {
 public:
-    /// @brief Constructs a trainer for a pipeline.
-    /// @param pipeline_ptr Pointer to the GNN pipeline.
+    /// @brief Constructs a trainer for a pipeline with shared ownership.
+    /// @param pipeline_ptr Shared pointer to the GNN pipeline.
     /// @param learning_rate Learning rate for optimization.
     /// @param opt_type Optimizer type (SGD or ADAM).
     /// @param weight_decay L2 regularization coefficient (default: 0).
     /// @throws std::runtime_error If pipeline_ptr is null or learning_rate is non-positive.
+    trainer(std::shared_ptr<pipeline> pipeline_ptr, double learning_rate = 0.01,
+            optimizer_type opt_type = optimizer_type::SGD, double weight_decay = 0.0);
+
+    /// @brief Constructs a trainer with custom optimizer and loss.
+    /// @param pipeline_ptr Shared pointer to the GNN pipeline.
+    /// @param opt Custom optimizer.
+    /// @param loss Custom loss function.
+    /// @throws std::runtime_error If pipeline_ptr is null.
+    trainer(std::shared_ptr<pipeline> pipeline_ptr,
+            std::unique_ptr<optimizer> opt,
+            std::unique_ptr<loss_function> loss = nullptr);
+
+    /// @brief Legacy constructor for backward compatibility (non-owning).
+    /// @param pipeline_ptr Raw pointer to the GNN pipeline (caller retains ownership).
+    /// @param learning_rate Learning rate for optimization.
+    /// @param opt_type Optimizer type (SGD or ADAM).
+    /// @param weight_decay L2 regularization coefficient (default: 0).
+    /// @throws std::runtime_error If pipeline_ptr is null or learning_rate is non-positive.
+    /// @deprecated Use shared_ptr constructor instead.
     trainer(pipeline* pipeline_ptr, double learning_rate = 0.01,
             optimizer_type opt_type = optimizer_type::SGD, double weight_decay = 0.0);
 
@@ -59,6 +73,13 @@ public:
     double cross_entropy_loss(const std::vector<feature_vec>& predicted,
                               const std::vector<feature_vec>& target) const;
 
+    /// @brief Computes loss using the configured loss function.
+    /// @param predicted Predicted node features.
+    /// @param target Target node features.
+    /// @return Loss value.
+    double compute_loss(const std::vector<feature_vec>& predicted,
+                       const std::vector<feature_vec>& target) const;
+
     /// @brief Performs one training step with analytic gradients.
     /// @param features Input node features.
     /// @param adj Adjacency matrix.
@@ -70,15 +91,33 @@ public:
 
     /// @brief Sets the learning rate.
     /// @param lr New learning rate.
-    void set_learning_rate(double lr) { learning_rate_ = lr; }
+    void set_learning_rate(double lr);
 
     /// @brief Gets the current learning rate.
     /// @return Current learning rate.
-    double learning_rate() const { return learning_rate_; }
+    double learning_rate() const;
 
     /// @brief Sets the weight decay (L2 regularization).
     /// @param wd New weight decay value.
-    void set_weight_decay(double wd) { weight_decay_ = wd; }
+    void set_weight_decay(double wd);
+
+    /// @brief Gets the optimizer (for advanced configuration).
+    /// @return Pointer to the optimizer.
+    optimizer* get_optimizer() { return optimizer_.get(); }
+
+    /// @brief Gets the loss function (for advanced configuration).
+    /// @return Pointer to the loss function.
+    loss_function* get_loss() { return loss_.get(); }
+
+    /// @brief Gets the pipeline (shared ownership).
+    /// @return Shared pointer to the pipeline.
+    std::shared_ptr<pipeline> get_pipeline() { return pipeline_; }
+
+    /// @brief Gets the pipeline (const access).
+    /// @return Const pointer to the pipeline.
+    const pipeline* get_pipeline_ptr() const {
+        return pipeline_ ? pipeline_.get() : pipeline_raw_;
+    }
 
 private:
     /// @brief Computes activation function derivative.
@@ -87,26 +126,13 @@ private:
     /// @return Derivative value.
     double activation_derivative(double x, activation_type act_type) const;
 
-    /// @brief Applies Adam optimizer update to parameters.
-    /// @param weights Weight matrix to update.
-    /// @param bias Bias vector to update.
-    /// @param weight_grad Weight gradients.
-    /// @param bias_grad Bias gradients.
-    /// @param state Adam state for this layer.
-    void adam_update(matrix::dense_matrix& weights, feature_vec& bias,
-                     const matrix::dense_matrix& weight_grad, const feature_vec& bias_grad,
-                     adam_state& state);
+    /// @brief Internal initialization shared by constructors.
+    void init(double learning_rate, optimizer_type opt_type, double weight_decay);
 
-    pipeline* pipeline_;                    ///< Pointer to the GNN pipeline.
-    double learning_rate_;                  ///< Learning rate for optimization.
-    double weight_decay_;                   ///< L2 regularization coefficient.
-    optimizer_type opt_type_;               ///< Optimizer type.
-    std::vector<adam_state> adam_states_;   ///< Adam states per layer.
-
-    // Adam hyperparameters
-    static constexpr double beta1_ = 0.9;
-    static constexpr double beta2_ = 0.999;
-    static constexpr double epsilon_ = 1e-8;
+    std::shared_ptr<pipeline> pipeline_;        ///< Shared pointer to the GNN pipeline.
+    pipeline* pipeline_raw_ = nullptr;          ///< Raw pointer for legacy compatibility.
+    std::unique_ptr<optimizer> optimizer_;      ///< Optimizer instance.
+    std::unique_ptr<loss_function> loss_;       ///< Loss function instance.
 };
 
 } // namespace gnn

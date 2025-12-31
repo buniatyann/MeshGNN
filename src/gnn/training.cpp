@@ -1,25 +1,22 @@
-#include "../../include/gnnmath/gnn/training.hpp"
-#include "../../include/gnnmath/vector.hpp"
+#include <gnnmath/gnn/training.hpp>
+#include <gnnmath/math/vector.hpp>
 #include <cmath>
 #include <stdexcept>
+#include <memory>
 #include <algorithm>
 
-// Namespace alias for vector operations (must be outside gnnmath namespace)
 namespace vec_ops = gnnmath::vector;
 
 namespace gnnmath {
 namespace gnn {
 
-// Use the feature_vec type alias
 using feature_vec = vec_ops::vector;
 
-trainer::trainer(pipeline* pipeline_ptr, double learning_rate,
-                 optimizer_type opt_type, double weight_decay)
-    : pipeline_(pipeline_ptr), learning_rate_(learning_rate),
-      weight_decay_(weight_decay), opt_type_(opt_type) {
-    if (!pipeline_ptr) {
-        throw std::runtime_error("trainer: null pipeline");
-    }
+pipeline* trainer_get_pipeline(const std::shared_ptr<pipeline>& shared, pipeline* raw) {
+    return shared ? shared.get() : raw;
+}
+
+void trainer::init(double learning_rate, optimizer_type opt_type, double weight_decay) {
     if (learning_rate <= 0.0) {
         throw std::runtime_error("trainer: learning rate must be positive");
     }
@@ -27,29 +24,61 @@ trainer::trainer(pipeline* pipeline_ptr, double learning_rate,
         throw std::runtime_error("trainer: weight decay must be non-negative");
     }
 
-    // Initialize Adam states for each layer
-    if (opt_type_ == optimizer_type::ADAM) {
-        const auto& layers = pipeline_->layers();
-        adam_states_.reserve(layers.size());
-
-        for (const auto& layer_ptr : layers) {
-            auto* gcn = dynamic_cast<gcn_layer*>(layer_ptr.get());
-            auto* edge_conv = dynamic_cast<edge_conv_layer*>(layer_ptr.get());
-
-            if (gcn || edge_conv) {
-                std::size_t in_dim = gcn ? gcn->in_features() : edge_conv->in_features();
-                std::size_t out_dim = gcn ? gcn->out_features() : edge_conv->out_features();
-
-                adam_state state;
-                state.m_weights.emplace(in_dim, out_dim);
-                state.v_weights.emplace(in_dim, out_dim);
-                state.m_bias = feature_vec(out_dim, 0.0);
-                state.v_bias = feature_vec(out_dim, 0.0);
-                state.t = 0;
-                adam_states_.push_back(std::move(state));
-            }
-        }
+    // optimizer based on type
+    if (opt_type == optimizer_type::ADAM) {
+        optimizer_ = std::make_unique<adam_optimizer>(learning_rate, weight_decay);
+    } 
+    else {
+        optimizer_ = std::make_unique<sgd_optimizer>(learning_rate, weight_decay);
     }
+
+    pipeline* p = trainer_get_pipeline(pipeline_, pipeline_raw_);
+    optimizer_->prepare_for_layers(p->layers().size());
+
+    // Default to MSE loss (use create_loss to avoid name collision with method)
+    loss_ = create_loss("mse");
+}
+
+trainer::trainer(std::shared_ptr<pipeline> pipeline_ptr, double learning_rate,
+                 optimizer_type opt_type, double weight_decay)
+    : pipeline_(std::move(pipeline_ptr)), pipeline_raw_(nullptr) {
+    if (!pipeline_) {
+        throw std::runtime_error("trainer: null pipeline");
+    }
+
+    init(learning_rate, opt_type, weight_decay);
+}
+
+trainer::trainer(std::shared_ptr<pipeline> pipeline_ptr,
+                std::unique_ptr<optimizer> opt,
+                std::unique_ptr<loss_function> loss)
+    : pipeline_(std::move(pipeline_ptr))
+    , pipeline_raw_(nullptr)
+    , optimizer_(std::move(opt))
+    , loss_(std::move(loss)) {
+    if (!pipeline_) {
+        throw std::runtime_error("trainer: null pipeline");
+    }
+    if (!optimizer_) {
+        throw std::runtime_error("trainer: null optimizer");
+    }
+
+    optimizer_->prepare_for_layers(pipeline_->layers().size());
+
+    // Default to MSE loss if not provided
+    if (!loss_) {
+        loss_ = create_loss("mse");
+    }
+}
+
+trainer::trainer(pipeline* pipeline_ptr, double learning_rate,
+                 optimizer_type opt_type, double weight_decay)
+    : pipeline_(nullptr), pipeline_raw_(pipeline_ptr) {
+    if (!pipeline_ptr) {
+        throw std::runtime_error("trainer: null pipeline");
+    }
+    
+    init(learning_rate, opt_type, weight_decay);
 }
 
 double trainer::mse_loss(const std::vector<feature_vec>& predicted,
@@ -80,19 +109,44 @@ double trainer::cross_entropy_loss(const std::vector<feature_vec>& predicted,
 
     constexpr double epsilon = 1e-10;
     double sum = 0.0;
-
     for (std::size_t i = 0; i < predicted.size(); ++i) {
         for (std::size_t j = 0; j < predicted[i].size(); ++j) {
             // Clamp predicted values to avoid log(0)
             double p = std::max(epsilon, std::min(1.0 - epsilon, predicted[i][j]));
             sum -= target[i][j] * std::log(p);
         }
+
         if (!std::isfinite(sum)) {
             throw std::runtime_error("cross_entropy_loss: non-finite result");
         }
     }
 
     return sum / static_cast<double>(predicted.size());
+}
+
+double trainer::compute_loss(const std::vector<feature_vec>& predicted,
+                            const std::vector<feature_vec>& target) const {
+    if (loss_) {
+        return loss_->compute(predicted, target);
+    }
+
+    return mse_loss(predicted, target);
+}
+
+void trainer::set_learning_rate(double lr) {
+    if (optimizer_) {
+        optimizer_->set_learning_rate(lr);
+    }
+}
+
+double trainer::learning_rate() const {
+    return optimizer_ ? optimizer_->learning_rate() : 0.0;
+}
+
+void trainer::set_weight_decay(double wd) {
+    if (optimizer_) {
+        optimizer_->set_weight_decay(wd);
+    }
 }
 
 double trainer::activation_derivative(double x, activation_type act_type) const {
@@ -130,54 +184,11 @@ double trainer::activation_derivative(double x, activation_type act_type) const 
     }
 }
 
-void trainer::adam_update(matrix::dense_matrix& weights, feature_vec& bias,
-                          const matrix::dense_matrix& weight_grad, const feature_vec& bias_grad,
-                          adam_state& state) {
-    state.t++;
-    double bias_correction1 = 1.0 - std::pow(beta1_, static_cast<double>(state.t));
-    double bias_correction2 = 1.0 - std::pow(beta2_, static_cast<double>(state.t));
-
-    // Update weight moments and apply
-    for (std::size_t i = 0; i < weights.rows(); ++i) {
-        for (std::size_t j = 0; j < weights.cols(); ++j) {
-            double g = weight_grad(i, j);
-            // Apply weight decay
-            g += weight_decay_ * weights(i, j);
-
-            // Update moments
-            (*state.m_weights)(i, j) = beta1_ * (*state.m_weights)(i, j) + (1.0 - beta1_) * g;
-            (*state.v_weights)(i, j) = beta2_ * (*state.v_weights)(i, j) + (1.0 - beta2_) * g * g;
-
-            // Bias-corrected estimates
-            double m_hat = (*state.m_weights)(i, j) / bias_correction1;
-            double v_hat = (*state.v_weights)(i, j) / bias_correction2;
-
-            // Update weights
-            weights(i, j) -= learning_rate_ * m_hat / (std::sqrt(v_hat) + epsilon_);
-        }
-    }
-
-    // Update bias moments and apply
-    for (std::size_t i = 0; i < bias.size(); ++i) {
-        double g = bias_grad[i];
-
-        // Update moments
-        state.m_bias[i] = beta1_ * state.m_bias[i] + (1.0 - beta1_) * g;
-        state.v_bias[i] = beta2_ * state.v_bias[i] + (1.0 - beta2_) * g * g;
-
-        // Bias-corrected estimates
-        double m_hat = state.m_bias[i] / bias_correction1;
-        double v_hat = state.v_bias[i] / bias_correction2;
-
-        // Update bias
-        bias[i] -= learning_rate_ * m_hat / (std::sqrt(v_hat) + epsilon_);
-    }
-}
-
 void trainer::train_step(const std::vector<feature_vec>& features,
                          const matrix::sparse_matrix& adj,
                          const std::vector<feature_vec>& target) {
-    if (!pipeline_) {
+    pipeline* p = trainer_get_pipeline(pipeline_, pipeline_raw_);
+    if (!p) {
         throw std::runtime_error("train_step: null pipeline");
     }
     if (features.empty() || features.size() != adj.rows || target.empty() ||
@@ -185,18 +196,16 @@ void trainer::train_step(const std::vector<feature_vec>& features,
         throw std::runtime_error("train_step: invalid input dimensions");
     }
 
-    const auto& layers = pipeline_->layers();
+    const auto& layers = p->layers();
     std::size_t num_layers = layers.size();
 
     // Forward pass: store activations for each layer
     std::vector<std::vector<feature_vec>> activations(num_layers + 1);
     std::vector<std::vector<feature_vec>> pre_activations(num_layers);
     activations[0] = features;
-
     for (std::size_t l = 0; l < num_layers; ++l) {
         auto* gcn = dynamic_cast<gcn_layer*>(layers[l].get());
         auto* edge_conv = dynamic_cast<edge_conv_layer*>(layers[l].get());
-
         if (!gcn && !edge_conv) {
             activations[l + 1] = activations[l];
             continue;
@@ -209,7 +218,6 @@ void trainer::train_step(const std::vector<feature_vec>& features,
 
         std::vector<feature_vec> pre_act(features.size(), feature_vec(out_dim, 0.0));
         std::vector<feature_vec> post_act(features.size(), feature_vec(out_dim, 0.0));
-
         if (gcn) {
             // GCN: H' = A * H * W + b
             for (std::size_t i = 0; i < features.size(); ++i) {
@@ -226,10 +234,12 @@ void trainer::train_step(const std::vector<feature_vec>& features,
                     for (std::size_t n = 0; n < in_dim; ++n) {
                         sum += aggregated[n] * weights(n, m);
                     }
+                    
                     pre_act[i][m] = sum + bias[m];
                 }
             }
-        } else {
+        } 
+        else {
             // EdgeConv: aggregates activation((f_i - f_j) * W + b)
             for (std::size_t i = 0; i < features.size(); ++i) {
                 for (std::size_t k = adj.row_ptr[i]; k < adj.row_ptr[i + 1]; ++k) {
@@ -240,9 +250,11 @@ void trainer::train_step(const std::vector<feature_vec>& features,
                         for (std::size_t n = 0; n < in_dim; ++n) {
                             sum += diff[n] * weights(n, m);
                         }
+                  
                         pre_act[i][m] += sum;
                     }
                 }
+
                 for (std::size_t m = 0; m < out_dim; ++m) {
                     pre_act[i][m] += bias[m];
                 }
@@ -251,7 +263,6 @@ void trainer::train_step(const std::vector<feature_vec>& features,
 
         pre_activations[l] = pre_act;
 
-        // Apply activation (default MISH as used in layers)
         activation_type act_type = activation_type::MISH;
         for (std::size_t i = 0; i < features.size(); ++i) {
             switch (act_type) {
@@ -282,27 +293,23 @@ void trainer::train_step(const std::vector<feature_vec>& features,
             2.0 / static_cast<double>(features.size()));
     }
 
-    std::size_t adam_idx = adam_states_.size();
+    std::size_t layer_idx = num_layers;
 
     // Backpropagate through layers in reverse
     for (int l = static_cast<int>(num_layers) - 1; l >= 0; --l) {
         auto* gcn = dynamic_cast<gcn_layer*>(layers[l].get());
         auto* edge_conv = dynamic_cast<edge_conv_layer*>(layers[l].get());
-
         if (!gcn && !edge_conv) {
             continue;
         }
 
-        if (opt_type_ == optimizer_type::ADAM && adam_idx > 0) {
-            --adam_idx;
-        }
-
+        --layer_idx;
         std::size_t out_dim = gcn ? gcn->out_features() : edge_conv->out_features();
         std::size_t in_dim = gcn ? gcn->in_features() : edge_conv->in_features();
         matrix::dense_matrix& weights = gcn ? gcn->weights() : edge_conv->weights();
         feature_vec& bias = gcn ? gcn->bias() : edge_conv->bias();
 
-        // Compute activation gradients
+        // activation gradients
         activation_type act_type = activation_type::MISH;
         std::vector<feature_vec> delta_pre(features.size(), feature_vec(out_dim, 0.0));
         for (std::size_t i = 0; i < features.size(); ++i) {
@@ -312,10 +319,9 @@ void trainer::train_step(const std::vector<feature_vec>& features,
             }
         }
 
-        // Compute weight and bias gradients
+        // weight and bias gradients
         matrix::dense_matrix weight_grad(in_dim, out_dim);
         feature_vec bias_grad(out_dim, 0.0);
-
         if (gcn) {
             // Weight gradient for GCN
             for (std::size_t i = 0; i < features.size(); ++i) {
@@ -338,7 +344,8 @@ void trainer::train_step(const std::vector<feature_vec>& features,
                     bias_grad[m] += delta_pre[i][m];
                 }
             }
-        } else {
+        } 
+        else {
             // Weight gradient for EdgeConv
             for (std::size_t i = 0; i < features.size(); ++i) {
                 for (std::size_t k = adj.row_ptr[i]; k < adj.row_ptr[i + 1]; ++k) {
@@ -358,21 +365,7 @@ void trainer::train_step(const std::vector<feature_vec>& features,
             }
         }
 
-        // Apply optimizer update
-        if (opt_type_ == optimizer_type::ADAM) {
-            adam_update(weights, bias, weight_grad, bias_grad, adam_states_[adam_idx]);
-        } else {
-            // SGD with weight decay
-            for (std::size_t i = 0; i < weights.rows(); ++i) {
-                for (std::size_t j = 0; j < weights.cols(); ++j) {
-                    double grad = weight_grad(i, j) + weight_decay_ * weights(i, j);
-                    weights(i, j) -= learning_rate_ * grad;
-                }
-            }
-            for (std::size_t i = 0; i < bias.size(); ++i) {
-                bias[i] -= learning_rate_ * bias_grad[i];
-            }
-        }
+        optimizer_->update(weights, bias, weight_grad, bias_grad, layer_idx);
 
         // Compute delta for previous layer (if not first layer)
         if (l > 0) {
@@ -392,7 +385,8 @@ void trainer::train_step(const std::vector<feature_vec>& features,
                         }
                     }
                 }
-            } else {
+            } 
+            else {
                 // Backprop through EdgeConv
                 for (std::size_t i = 0; i < features.size(); ++i) {
                     for (std::size_t n = 0; n < in_dim; ++n) {
@@ -400,10 +394,12 @@ void trainer::train_step(const std::vector<feature_vec>& features,
                         for (std::size_t m = 0; m < out_dim; ++m) {
                             sum += delta_pre[i][m] * weights(n, m);
                         }
+            
                         delta_prev[i][n] += sum * static_cast<double>(adj.row_ptr[i + 1] - adj.row_ptr[i]);
                     }
                 }
             }
+            
             delta = delta_prev;
         }
     }
