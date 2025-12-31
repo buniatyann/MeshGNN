@@ -1,10 +1,13 @@
 #ifndef GNNMATH_GNN_PIPELINE_HPP
 #define GNNMATH_GNN_PIPELINE_HPP
 
-#include "../mesh.hpp"
-#include "../matrix.hpp"
-#include "../vector.hpp"
-#include "layer.hpp"
+#include "../geometry/mesh.hpp"
+#include "../math/dense_matrix.hpp"
+#include "../math/sparse_matrix.hpp"
+#include "../math/vector.hpp"
+#include "layers/layer.hpp"
+#include "layers/gcn_layer.hpp"
+#include "layers/edge_conv_layer.hpp"
 
 #include <memory>
 #include <vector>

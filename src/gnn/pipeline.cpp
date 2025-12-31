@@ -1,11 +1,10 @@
-#include "../../include/gnnmath/gnn/pipeline.hpp"
+#include <gnnmath/gnn/pipeline.hpp>
 #include <stdexcept>
 #include <fstream>
 
 namespace gnnmath {
 namespace gnn {
 
-// Use feature_vec from parent namespace
 using gnnmath::feature_vec;
 
 // Magic number and version for file format validation
@@ -72,29 +71,29 @@ void pipeline::save(const std::string& filename) const {
     // Write number of layers
     uint32_t num_layers = static_cast<uint32_t>(layers_.size());
     file.write(reinterpret_cast<const char*>(&num_layers), sizeof(num_layers));
-
-    // Write each layer's parameters
     for (const auto& layer_ptr : layers_) {
         auto* gcn = dynamic_cast<gcn_layer*>(layer_ptr.get());
         auto* edge_conv = dynamic_cast<edge_conv_layer*>(layer_ptr.get());
 
         // Write layer type: 0 = unknown, 1 = GCN, 2 = EdgeConv
         uint8_t layer_type = 0;
-        if (gcn) layer_type = 1;
-        else if (edge_conv) layer_type = 2;
+        if (gcn) {
+            layer_type = 1;
+        }
+        else if (edge_conv) {
+            layer_type = 2;
+        }
+        
         file.write(reinterpret_cast<const char*>(&layer_type), sizeof(layer_type));
-
         if (gcn || edge_conv) {
             const matrix::dense_matrix& weights = gcn ? gcn->weights() : edge_conv->weights();
             const feature_vec& bias = gcn ? gcn->bias() : edge_conv->bias();
 
-            // Write dimensions
             uint32_t rows = static_cast<uint32_t>(weights.rows());
             uint32_t cols = static_cast<uint32_t>(weights.cols());
             file.write(reinterpret_cast<const char*>(&rows), sizeof(rows));
             file.write(reinterpret_cast<const char*>(&cols), sizeof(cols));
 
-            // Write weights
             for (std::size_t i = 0; i < weights.rows(); ++i) {
                 for (std::size_t j = 0; j < weights.cols(); ++j) {
                     double val = weights(i, j);
@@ -102,7 +101,6 @@ void pipeline::save(const std::string& filename) const {
                 }
             }
 
-            // Write bias
             uint32_t bias_size = static_cast<uint32_t>(bias.size());
             file.write(reinterpret_cast<const char*>(&bias_size), sizeof(bias_size));
             for (double val : bias) {
@@ -127,7 +125,6 @@ void pipeline::load(const std::string& filename) {
     uint32_t version = 0;
     file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
     file.read(reinterpret_cast<char*>(&version), sizeof(version));
-
     if (magic != MAGIC_NUMBER) {
         throw std::runtime_error("load: invalid file format (magic number mismatch)");
     }
@@ -135,10 +132,8 @@ void pipeline::load(const std::string& filename) {
         throw std::runtime_error("load: unsupported file version");
     }
 
-    // Read number of layers
     uint32_t num_layers = 0;
     file.read(reinterpret_cast<char*>(&num_layers), sizeof(num_layers));
-
     if (num_layers != layers_.size()) {
         throw std::runtime_error("load: layer count mismatch (expected " +
                                  std::to_string(layers_.size()) + ", got " +
@@ -149,14 +144,17 @@ void pipeline::load(const std::string& filename) {
     for (std::size_t l = 0; l < num_layers; ++l) {
         auto* gcn = dynamic_cast<gcn_layer*>(layers_[l].get());
         auto* edge_conv = dynamic_cast<edge_conv_layer*>(layers_[l].get());
-
         uint8_t layer_type = 0;
         file.read(reinterpret_cast<char*>(&layer_type), sizeof(layer_type));
 
         // Validate layer type matches
         uint8_t expected_type = 0;
-        if (gcn) expected_type = 1;
-        else if (edge_conv) expected_type = 2;
+        if (gcn) {
+            expected_type = 1;
+        }
+        else if (edge_conv) {
+            expected_type = 2;
+        }
 
         if (layer_type != expected_type) {
             throw std::runtime_error("load: layer type mismatch at layer " + std::to_string(l));
@@ -166,16 +164,13 @@ void pipeline::load(const std::string& filename) {
             matrix::dense_matrix& weights = gcn ? gcn->weights() : edge_conv->weights();
             feature_vec& bias = gcn ? gcn->bias() : edge_conv->bias();
 
-            // Read dimensions
             uint32_t rows = 0, cols = 0;
             file.read(reinterpret_cast<char*>(&rows), sizeof(rows));
             file.read(reinterpret_cast<char*>(&cols), sizeof(cols));
-
             if (rows != weights.rows() || cols != weights.cols()) {
                 throw std::runtime_error("load: weight dimension mismatch at layer " + std::to_string(l));
             }
 
-            // Read weights
             for (std::size_t i = 0; i < weights.rows(); ++i) {
                 for (std::size_t j = 0; j < weights.cols(); ++j) {
                     double val = 0.0;
@@ -184,10 +179,8 @@ void pipeline::load(const std::string& filename) {
                 }
             }
 
-            // Read bias
             uint32_t bias_size = 0;
             file.read(reinterpret_cast<char*>(&bias_size), sizeof(bias_size));
-
             if (bias_size != bias.size()) {
                 throw std::runtime_error("load: bias dimension mismatch at layer " + std::to_string(l));
             }
