@@ -40,6 +40,10 @@ public:
     /// @return Reference to bias vector.
     feature_vec& bias() { return bias_; }
 
+    /// @brief Returns the activation function type.
+    /// @return Activation type.
+    activation_type activation() const { return activation_; }
+
 private:
     std::size_t in_dim_;           ///< Input feature dimension.
     std::size_t out_dim_;          ///< Output feature dimension.
