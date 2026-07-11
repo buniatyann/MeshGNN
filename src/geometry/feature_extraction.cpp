@@ -3,6 +3,7 @@
 #include <gnnmath/core/random.hpp>
 #include <gnnmath/geometry/feature_extraction.hpp>
 #include <vector>
+#include <map>
 #include <stdexcept>
 #include <cmath>
 #include <execution>
@@ -13,51 +14,71 @@ namespace mesh {
 std::vector<scalar_t> compute_gaussian_curvature(const mesh& m) {
     m.validate();
     std::vector<scalar_t> curvature(m.n_vertices(), 0.0);
-    const auto& normals = m.compute_normals();
-    const auto& adj = m.adjacency();
+
+    // Vertex -> incident face indices
+    std::vector<std::vector<index_t>> vertex_faces(m.n_vertices());
+    // Face count per undirected edge, to detect boundary vertices
+    std::map<std::pair<index_t, index_t>, index_t> edge_face_count;
+    for (index_t fi = 0; fi < m.n_faces(); ++fi) {
+        const auto& f = m.faces()[fi];
+        for (index_t c = 0; c < 3; ++c) {
+            vertex_faces[f[c]].push_back(fi);
+            index_t a = f[c], b = f[(c + 1) % 3];
+            ++edge_face_count[{std::min(a, b), std::max(a, b)}];
+        }
+    }
+
+    // A vertex is on the boundary if any incident edge borders exactly one face
+    std::vector<bool> boundary(m.n_vertices(), false);
+    for (const auto& [e, count] : edge_face_count) {
+        if (count == 1) {
+            boundary[e.first] = true;
+            boundary[e.second] = true;
+        }
+    }
+
     for (index_t v = 0; v < m.n_vertices(); ++v) {
-        auto neighbors = adj.count(v) ? adj.at(v) : std::vector<index_t>{};
-        if (neighbors.empty()) {
+        if (vertex_faces[v].empty()) {
             continue;
         }
 
         scalar_t angle_sum = 0.0;
         scalar_t area_sum = 0.0;
-        // Iterate over incident triangles
-        for (const auto& f : m.faces()) {
-            if (f[0] == v || f[1] == v || f[2] == v) {
-                index_t v0 = f[0], v1 = f[1], v2 = f[2];
-                // Find vertices u, w in triangle (v, u, w)
-                index_t u = (v0 == v) ? v1 : (v1 == v) ? v2 : v0;
-                index_t w = (v0 == v) ? v2 : (v1 == v) ? v0 : v1;
-                // Compute angle at v
-                auto vu = vector::operator-(m.vertices()[u], m.vertices()[v]);
-                auto vw = vector::operator-(m.vertices()[w], m.vertices()[v]);
-                scalar_t cos_theta = vector::dot_product(vu, vw) /
-                    (vector::euclidean_norm(vu) * vector::euclidean_norm(vw));
-                if (cos_theta < -1.0) {
-                    cos_theta = -1.0;
-                }
-                
-                if (cos_theta > 1.0) {
-                    cos_theta = 1.0;
-                }
-                
-                scalar_t theta = std::acos(cos_theta);
-                angle_sum += theta;
-                // Approximate area as 1/3 of triangle area
-                auto cross = vector::vector{
-                    vu[1] * vw[2] - vu[2] * vw[1],
-                    vu[2] * vw[0] - vu[0] * vw[2],
-                    vu[0] * vw[1] - vu[1] * vw[0]
-                };
-                
-                area_sum += vector::euclidean_norm(cross) / 6.0; // 1/2 for triangle, 1/3 for vertex
+        for (index_t fi : vertex_faces[v]) {
+            const auto& f = m.faces()[fi];
+            index_t v0 = f[0], v1 = f[1], v2 = f[2];
+            // Find vertices u, w in triangle (v, u, w)
+            index_t u = (v0 == v) ? v1 : (v1 == v) ? v2 : v0;
+            index_t w = (v0 == v) ? v2 : (v1 == v) ? v0 : v1;
+            // Compute angle at v
+            auto vu = vector::operator-(m.vertices()[u], m.vertices()[v]);
+            auto vw = vector::operator-(m.vertices()[w], m.vertices()[v]);
+            scalar_t cos_theta = vector::dot_product(vu, vw) /
+                (vector::euclidean_norm(vu) * vector::euclidean_norm(vw));
+            if (cos_theta < -1.0) {
+                cos_theta = -1.0;
             }
+
+            if (cos_theta > 1.0) {
+                cos_theta = 1.0;
+            }
+
+            scalar_t theta = std::acos(cos_theta);
+            angle_sum += theta;
+            // Approximate area as 1/3 of triangle area
+            auto cross = vector::vector{
+                vu[1] * vw[2] - vu[2] * vw[1],
+                vu[2] * vw[0] - vu[0] * vw[2],
+                vu[0] * vw[1] - vu[1] * vw[0]
+            };
+
+            area_sum += vector::euclidean_norm(cross) / 6.0; // 1/2 for triangle, 1/3 for vertex
         }
 
         if (area_sum > 1e-10) {
-            curvature[v] = (2.0 * M_PI - angle_sum) / area_sum;
+            // Angle deficit: 2*pi for interior vertices, pi on the boundary
+            scalar_t full_angle = boundary[v] ? M_PI : 2.0 * M_PI;
+            curvature[v] = (full_angle - angle_sum) / area_sum;
         }
     }
 
@@ -70,13 +91,13 @@ std::vector<vector::vector> compute_combined_node_features(const mesh& m) {
     auto normals = m.compute_normals();
     auto curvature = compute_gaussian_curvature(m);
     std::vector<vector::vector> features(m.n_vertices());
-    std::transform(std::execution::par_unseq, coords.begin(), coords.end(), features.begin(),
-                [&normals, &curvature, i = 0](const auto& coord) mutable {
-                    vector::vector feat(coord.begin(), coord.end());
-                    feat.insert(feat.end(), normals[i].begin(), normals[i].end());
-                    feat.push_back(curvature[i++]);
-                    return feat;
-                });
+    // Indexed loop: a stateful counter in a parallel transform would race
+    for (index_t i = 0; i < m.n_vertices(); ++i) {
+        vector::vector feat(coords[i].begin(), coords[i].end());
+        feat.insert(feat.end(), normals[i].begin(), normals[i].end());
+        feat.push_back(curvature[i]);
+        features[i] = std::move(feat);
+    }
 
     return features;
 }
