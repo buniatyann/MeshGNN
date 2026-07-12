@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <cmath>
 #include <execution>
+#include <functional>
 
 namespace gnnmath {
 namespace mesh {
@@ -44,6 +45,13 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
     std::vector<bool> valid_vertices(m.n_vertices(), true);
     std::vector<bool> valid_edges(m.n_edges(), true);
 
+    // collapse_target[u] = v means u was merged into v; chains are possible
+    // (u -> v -> w) when the survivor of one collapse is later removed itself.
+    std::vector<index_t> collapse_target(m.n_vertices());
+    for (index_t i = 0; i < m.n_vertices(); ++i) {
+        collapse_target[i] = i;
+    }
+
     // costs initialization
     const auto& edges = m.edges();
     if (!gnn_scores.empty()) {
@@ -77,6 +85,7 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
         // Collapse u -> v (u is removed, v survives at midpoint)
         valid_vertices[u] = false;
         valid_edges[edge_idx] = false;
+        collapse_target[u] = v;
         --current_vertices;
 
         // Update vertex position to midpoint
@@ -86,12 +95,30 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
         // Collect edges that need cost updates (edges incident to v)
         std::set<index_t> edges_to_update;
 
-        // Get incident edges of u and transfer them to v
+        // Current neighbors of v (to detect duplicate edges after redirection)
+        std::set<index_t> v_neighbors;
+        if (m.incident_edges().count(v)) {
+            for (index_t inc_edge : m.incident_edges().at(v)) {
+                if (valid_edges[inc_edge]) {
+                    auto [eu, ev] = m.edges()[inc_edge];
+                    v_neighbors.insert(eu == v ? ev : eu);
+                    edges_to_update.insert(inc_edge);
+                }
+            }
+        }
+
+        // Redirect u's incident edges to v and transfer them to v's incidence list
         if (m.incident_edges().count(u)) {
             for (index_t inc_edge : m.incident_edges().at(u)) {
                 if (valid_edges[inc_edge] && inc_edge != edge_idx) {
                     auto& [eu, ev] = m.edges()[inc_edge];
-                    // Redirect edge from u to v
+                    index_t other = (eu == u) ? ev : eu;
+                    // Self-loop or duplicate of an existing v-edge
+                    if (other == v || v_neighbors.count(other)) {
+                        valid_edges[inc_edge] = false;
+                        continue;
+                    }
+
                     if (eu == u) {
                         eu = v;
                     }
@@ -99,24 +126,13 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
                         ev = v;
                     }
 
-                    // Check if edge became degenerate (self-loop)
-                    if (eu == ev) {
-                        valid_edges[inc_edge] = false;
-                    } 
-                    else {
-                        edges_to_update.insert(inc_edge);
-                    }
-                }
-            }
-        }
-
-        // Add edges incident to v for update
-        if (m.incident_edges().count(v)) {
-            for (index_t inc_edge : m.incident_edges().at(v)) {
-                if (valid_edges[inc_edge]) {
+                    m.incident_edges()[v].push_back(inc_edge);
+                    v_neighbors.insert(other);
                     edges_to_update.insert(inc_edge);
                 }
             }
+
+            m.incident_edges().erase(u);
         }
 
         // Update costs and re-add to priority queue with new version
@@ -138,6 +154,16 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
         }
     }
 
+    // Resolve collapse chains (u -> v -> w) to the final surviving vertex,
+    // with path compression
+    std::function<index_t(index_t)> resolve = [&](index_t i) -> index_t {
+        if (collapse_target[i] != i) {
+            collapse_target[i] = resolve(collapse_target[i]);
+        }
+
+        return collapse_target[i];
+    };
+
     // rebuild mesh with only valid elements
     std::vector<mesh::vertex> new_vertices;
     std::vector<index_t> old_to_new(m.n_vertices(), 0);
@@ -151,14 +177,10 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
 
     m.vertices() = std::move(new_vertices);
 
-    // remap indices and filter degenerate faces
+    // remap faces onto surviving vertices and filter degenerate faces
     std::vector<mesh::face> new_faces;
     for (const auto& f : m.faces()) {
-        if (!valid_vertices[f[0]] || !valid_vertices[f[1]] || !valid_vertices[f[2]]) {
-            continue;
-        }
-        
-        mesh::face new_f = {old_to_new[f[0]], old_to_new[f[1]], old_to_new[f[2]]};
+        mesh::face new_f = {old_to_new[resolve(f[0])], old_to_new[resolve(f[1])], old_to_new[resolve(f[2])]};
         // Check for degenerate face
         if (new_f[0] != new_f[1] && new_f[1] != new_f[2] && new_f[2] != new_f[0]) {
             new_faces.push_back(new_f);
