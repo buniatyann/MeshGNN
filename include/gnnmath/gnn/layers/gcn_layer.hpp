@@ -24,6 +24,20 @@ public:
     std::vector<feature_vec> forward(const std::vector<feature_vec>& features,
                                const matrix::sparse_matrix& adj) const override;
 
+    /// @brief Forward pass caching pre-activations and aggregates for backward.
+    std::vector<feature_vec> forward_cached(const std::vector<feature_vec>& features,
+                                      const matrix::sparse_matrix& adj,
+                                      std::unique_ptr<layer_cache>& cache) const override;
+
+    /// @brief Backward pass through the GCN layer.
+    std::vector<feature_vec> backward(const std::vector<feature_vec>& delta_out,
+                                const std::vector<feature_vec>& input,
+                                const matrix::sparse_matrix& adj,
+                                const layer_cache& cache,
+                                matrix::dense_matrix& weight_grad,
+                                feature_vec& bias_grad,
+                                bool compute_delta_prev) const override;
+
     /// @brief Returns input feature dimension.
     /// @return Input dimension.
     std::size_t in_features() const override { return in_dim_; }
@@ -32,13 +46,28 @@ public:
     /// @return Output dimension.
     std::size_t out_features() const override { return out_dim_; }
 
+    /// @brief Returns views of weights and bias.
+    param_refs parameters() override { return {&weights_, &bias_}; }
+
+    /// @brief Returns the layer type tag.
+    layer_kind kind() const override { return layer_kind::gcn; }
+
+    /// @brief Returns the activation type.
+    activation_type act() const override { return activation_; }
+
     /// @brief Accesses weights for training.
     /// @return Reference to weight matrix.
     matrix::dense_matrix& weights() { return weights_; }
 
+    /// @brief Accesses weights (const).
+    const matrix::dense_matrix& weights() const { return weights_; }
+
     /// @brief Accesses bias for training.
     /// @return Reference to bias vector.
     feature_vec& bias() { return bias_; }
+
+    /// @brief Accesses bias (const).
+    const feature_vec& bias() const { return bias_; }
 
     /// @brief Returns the activation function type.
     /// @return Activation type.
