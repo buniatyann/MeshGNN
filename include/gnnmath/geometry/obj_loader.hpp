@@ -12,6 +12,8 @@
 namespace gnnmath {
 namespace mesh {
 
+class mesh;
+
 /// @brief Result of parsing a single face vertex (v/vt/vn format)
 struct face_vertex {
     std::size_t vertex_idx;                      ///< Vertex position index (1-based in file, converted to 0-based)
@@ -178,7 +180,7 @@ private:
     /// @brief Triangulate a polygon face using the configured method
     std::vector<std::array<face_vertex, 3>> triangulate_face(const polygon_face& face, const obj_data& data);
 
-    /// @brief Fan triangulation - uses Delaunay for better triangle quality
+    /// @brief Fan triangulation - fast, correct for convex polygons
     std::vector<std::array<face_vertex, 3>> triangulate_fan(const polygon_face& face, const obj_data& data);
 
     /// @brief Ear clipping triangulation - handles concave polygons
@@ -215,6 +217,17 @@ obj_data load_obj_file(const std::string& filename);
 /// @param options Loading options
 /// @return Parsed OBJ data
 obj_data load_obj_file(const std::string& filename, const obj_load_options& options);
+
+/// @brief Writes a mesh as an OBJ file (v records and 1-based f records;
+/// optionally per-vertex vn records from mesh::compute_normals). Texture
+/// coordinates and file normals are not written: simplification invalidates
+/// their per-face indexing, so plain geometry is the correct output.
+/// @param m Mesh to write.
+/// @param filename Output path.
+/// @param write_normals Also write vn records and reference them from faces.
+/// @throws std::runtime_error If the file cannot be opened, the mesh is
+/// invalid, or writing fails.
+void save_obj(const mesh& m, const std::string& filename, bool write_normals = false);
 
 } // namespace mesh
 } // namespace gnnmath
