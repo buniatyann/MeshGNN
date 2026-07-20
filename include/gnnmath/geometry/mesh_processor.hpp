@@ -9,11 +9,13 @@ namespace gnnmath {
 namespace mesh {
 
 /**
- * @brief Computes quadric error approximation for edge collapse.
+ * @brief Computes the Garland-Heckbert quadric error of collapsing edge (u, v)
+ * to its midpoint, from the plane quadrics of all faces incident to u or v.
  * @param m Mesh object.
  * @param u First vertex index.
  * @param v Second vertex index.
- * @return Quadric error cost for collapsing edge (u, v).
+ * @return Quadric error cost for collapsing edge (u, v). Zero for edges in
+ * locally flat regions.
  * @throws std::runtime_error If vertex indices are invalid.
  */
 scalar_t compute_quadric_error(const mesh& m, index_t u, index_t v);
