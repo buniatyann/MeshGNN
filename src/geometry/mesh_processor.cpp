@@ -6,6 +6,7 @@
 #include <vector>
 #include <queue>
 #include <set>
+#include <array>
 #include <stdexcept>
 #include <cmath>
 #include <execution>
@@ -14,15 +15,109 @@
 namespace gnnmath {
 namespace mesh {
 
+namespace {
+
+/// Symmetric 4x4 error quadric (Garland-Heckbert), stored as the upper
+/// triangle: q00 q01 q02 q03 q11 q12 q13 q22 q23 q33.
+struct quadric {
+    std::array<scalar_t, 10> q{};
+
+    quadric& operator+=(const quadric& rhs) {
+        for (std::size_t i = 0; i < q.size(); ++i) {
+            q[i] += rhs.q[i];
+        }
+
+        return *this;
+    }
+
+    quadric operator+(const quadric& rhs) const {
+        quadric result = *this;
+        result += rhs;
+        return result;
+    }
+
+    /// v^T Q v with v = (x, y, z, 1); clamped at 0 against rounding noise.
+    scalar_t evaluate(const mesh::vertex& p) const {
+        scalar_t x = p[0], y = p[1], z = p[2];
+        scalar_t val = q[0] * x * x + 2.0 * q[1] * x * y + 2.0 * q[2] * x * z + 2.0 * q[3] * x
+                     + q[4] * y * y + 2.0 * q[5] * y * z + 2.0 * q[6] * y
+                     + q[7] * z * z + 2.0 * q[8] * z
+                     + q[9];
+        return std::max(0.0, val);
+    }
+};
+
+/// Plane quadric of the triangle (p0, p1, p2): K = pp^T for the unit plane
+/// p = (a, b, c, d) with ax + by + cz + d = 0. Degenerate faces contribute zero.
+quadric plane_quadric(const mesh::vertex& p0, const mesh::vertex& p1, const mesh::vertex& p2) {
+    scalar_t e1x = p1[0] - p0[0], e1y = p1[1] - p0[1], e1z = p1[2] - p0[2];
+    scalar_t e2x = p2[0] - p0[0], e2y = p2[1] - p0[1], e2z = p2[2] - p0[2];
+    scalar_t a = e1y * e2z - e1z * e2y;
+    scalar_t b = e1z * e2x - e1x * e2z;
+    scalar_t c = e1x * e2y - e1y * e2x;
+    scalar_t len = std::sqrt(a * a + b * b + c * c);
+
+    quadric k;
+    if (len < 1e-12) {
+        return k;
+    }
+
+    a /= len;
+    b /= len;
+    c /= len;
+    scalar_t d = -(a * p0[0] + b * p0[1] + c * p0[2]);
+    k.q = {a * a, a * b, a * c, a * d,
+           b * b, b * c, b * d,
+           c * c, c * d,
+           d * d};
+    return k;
+}
+
+/// Per-vertex quadrics: each face's plane quadric accumulates into its vertices.
+std::vector<quadric> compute_vertex_quadrics(const mesh& m) {
+    std::vector<quadric> quadrics(m.n_vertices());
+    for (const auto& [v0, v1, v2] : m.faces()) {
+        quadric k = plane_quadric(m.vertices()[v0], m.vertices()[v1], m.vertices()[v2]);
+        quadrics[v0] += k;
+        quadrics[v1] += k;
+        quadrics[v2] += k;
+    }
+
+    return quadrics;
+}
+
+mesh::vertex midpoint(const mesh::vertex& a, const mesh::vertex& b) {
+    return {0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2])};
+}
+
+} // namespace
+
 scalar_t compute_quadric_error(const mesh& m, index_t u, index_t v) {
     if (u >= m.n_vertices() || v >= m.n_vertices()) {
         throw std::runtime_error("compute_quadric_error: invalid vertex index");
     }
-    // Use edge length as a proxy for quadric error (extend with full quadric matrices for accuracy)
-    const auto& p0 = m.vertices()[u];
-    const auto& p1 = m.vertices()[v];
 
-    return vector::euclidean_norm(vector::operator-(p1, p0));
+    // Garland-Heckbert cost of collapsing (u, v) to the edge midpoint:
+    // (Qu + Qv) evaluated at the midpoint, with Qu/Qv accumulated from the
+    // planes of all faces incident to u or v.
+    quadric qu, qv;
+    for (const auto& f : m.faces()) {
+        bool has_u = (f[0] == u || f[1] == u || f[2] == u);
+        bool has_v = (f[0] == v || f[1] == v || f[2] == v);
+        if (!has_u && !has_v) {
+            continue;
+        }
+
+        quadric k = plane_quadric(m.vertices()[f[0]], m.vertices()[f[1]], m.vertices()[f[2]]);
+        if (has_u) {
+            qu += k;
+        }
+        if (has_v) {
+            qv += k;
+        }
+    }
+
+    return (qu + qv).evaluate(midpoint(m.vertices()[u], m.vertices()[v]));
 }
 
 void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
@@ -52,14 +147,20 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
         collapse_target[i] = i;
     }
 
+    // Per-vertex error quadrics (Garland-Heckbert), accumulated on collapse
+    std::vector<quadric> quadrics = compute_vertex_quadrics(m);
+    auto edge_cost = [&](index_t eu, index_t ev) {
+        return (quadrics[eu] + quadrics[ev]).evaluate(midpoint(m.vertices()[eu], m.vertices()[ev]));
+    };
+
     // costs initialization
     const auto& edges = m.edges();
     if (!gnn_scores.empty()) {
         costs = gnn_scores;
-    } 
+    }
     else {
         for (index_t i = 0; i < edges.size(); ++i) {
-            costs[i] = compute_quadric_error(m, edges[i].first, edges[i].second);
+            costs[i] = edge_cost(edges[i].first, edges[i].second);
         }
     }
 
@@ -88,9 +189,11 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
         collapse_target[u] = v;
         --current_vertices;
 
-        // Update vertex position to midpoint
+        // Update vertex position to midpoint; the survivor inherits the
+        // removed vertex's accumulated quadric
         m.vertices()[v] = vector::scalar_multiply(
             vector::operator+(m.vertices()[u], m.vertices()[v]), 0.5);
+        quadrics[v] += quadrics[u];
 
         // Collect edges that need cost updates (edges incident to v)
         std::set<index_t> edges_to_update;
@@ -147,8 +250,10 @@ void simplify_gnn_edge_collapse(mesh& m, index_t target_vertices,
                 continue;
             }
 
-            // new cost
-            costs[eidx] = compute_quadric_error(m, eu, ev);
+            // New cost from the updated quadrics. Note: even when the initial
+            // costs came from gnn_scores, redirected/moved edges are re-costed
+            // geometrically (a GNN score for the old geometry is stale).
+            costs[eidx] = edge_cost(eu, ev);
             edge_versions[eidx]++;
             pq.push({costs[eidx], eidx, edge_versions[eidx]});
         }
