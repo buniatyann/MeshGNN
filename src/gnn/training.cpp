@@ -83,45 +83,20 @@ trainer::trainer(pipeline* pipeline_ptr, double learning_rate,
 
 double trainer::mse_loss(const std::vector<feature_vec>& predicted,
                          const std::vector<feature_vec>& target) const {
-    if (predicted.size() != target.size() || predicted.empty() ||
-        (!target.empty() && predicted[0].size() != target[0].size())) {
-        throw std::runtime_error("mse_loss: dimension mismatch");
+    if (predicted.empty()) {
+        throw std::runtime_error("mse_loss: empty input");
     }
 
-    double sum = 0.0;
-    for (std::size_t i = 0; i < predicted.size(); ++i) {
-        auto diff = vec_ops::operator-(predicted[i], target[i]);
-        sum += vec_ops::dot_product(diff, diff);
-        if (!std::isfinite(sum)) {
-            throw std::runtime_error("mse_loss: non-finite result");
-        }
-    }
-
-    return sum / static_cast<double>(predicted.size());
+    return gnn::mse_loss{}.compute(predicted, target);
 }
 
 double trainer::cross_entropy_loss(const std::vector<feature_vec>& predicted,
                                    const std::vector<feature_vec>& target) const {
-    if (predicted.size() != target.size() || predicted.empty() ||
-        (!target.empty() && predicted[0].size() != target[0].size())) {
-        throw std::runtime_error("cross_entropy_loss: dimension mismatch");
+    if (predicted.empty()) {
+        throw std::runtime_error("cross_entropy_loss: empty input");
     }
 
-    constexpr double epsilon = 1e-10;
-    double sum = 0.0;
-    for (std::size_t i = 0; i < predicted.size(); ++i) {
-        for (std::size_t j = 0; j < predicted[i].size(); ++j) {
-            // Clamp predicted values to avoid log(0)
-            double p = std::max(epsilon, std::min(1.0 - epsilon, predicted[i][j]));
-            sum -= target[i][j] * std::log(p);
-        }
-
-        if (!std::isfinite(sum)) {
-            throw std::runtime_error("cross_entropy_loss: non-finite result");
-        }
-    }
-
-    return sum / static_cast<double>(predicted.size());
+    return gnn::cross_entropy_loss{}.compute(predicted, target);
 }
 
 double trainer::compute_loss(const std::vector<feature_vec>& predicted,
@@ -149,41 +124,6 @@ void trainer::set_weight_decay(double wd) {
     }
 }
 
-double trainer::activation_derivative(double x, activation_type act_type) const {
-    switch (act_type) {
-        case activation_type::RELU:
-            return x > 0.0 ? 1.0 : 0.0;
-
-        case activation_type::SIGMOID: {
-            double s = 1.0 / (1.0 + std::exp(-std::min(x, 700.0)));
-            return s * (1.0 - s);
-        }
-
-        case activation_type::MISH: {
-            // Mish: x * tanh(softplus(x))
-            // Derivative: tanh(sp) + x * sech^2(sp) * sigmoid(x)
-            double sp = std::log1p(std::exp(std::min(x, 700.0)));
-            double tanh_sp = std::tanh(sp);
-            double sig = 1.0 / (1.0 + std::exp(-std::min(x, 700.0)));
-            double sech2 = 1.0 - tanh_sp * tanh_sp;
-            return tanh_sp + x * sech2 * sig;
-        }
-
-        case activation_type::GELU: {
-            // GELU: x * 0.5 * (1 + erf(x / sqrt(2)))
-            // Derivative: 0.5 * (1 + erf(x/sqrt(2))) + x * exp(-x^2/2) / sqrt(2*pi)
-            constexpr double sqrt_2 = 1.4142135623730951;
-            constexpr double sqrt_2pi = 2.5066282746310002;
-            double erf_term = 0.5 * (1.0 + std::erf(x / sqrt_2));
-            double exp_term = std::exp(-0.5 * x * x) / sqrt_2pi;
-            return erf_term + x * exp_term;
-        }
-
-        default:
-            return 1.0;
-    }
-}
-
 void trainer::train_step(const std::vector<feature_vec>& features,
                          const matrix::sparse_matrix& adj,
                          const std::vector<feature_vec>& target) {
@@ -197,210 +137,49 @@ void trainer::train_step(const std::vector<feature_vec>& features,
     }
 
     const auto& layers = p->layers();
-    std::size_t num_layers = layers.size();
+    const std::size_t num_layers = layers.size();
+    const std::size_t num_nodes = features.size();
 
-    // Forward pass: store activations for each layer
+    // Forward pass: each layer caches whatever its backward pass needs
     std::vector<std::vector<feature_vec>> activations(num_layers + 1);
-    std::vector<std::vector<feature_vec>> pre_activations(num_layers);
+    std::vector<std::unique_ptr<layer_cache>> caches(num_layers);
     activations[0] = features;
     for (std::size_t l = 0; l < num_layers; ++l) {
-        auto* gcn = dynamic_cast<gcn_layer*>(layers[l].get());
-        auto* edge_conv = dynamic_cast<edge_conv_layer*>(layers[l].get());
-        if (!gcn && !edge_conv) {
-            activations[l + 1] = activations[l];
-            continue;
-        }
-
-        std::size_t out_dim = gcn ? gcn->out_features() : edge_conv->out_features();
-        std::size_t in_dim = gcn ? gcn->in_features() : edge_conv->in_features();
-        const matrix::dense_matrix& weights = gcn ? gcn->weights() : edge_conv->weights();
-        const feature_vec& bias = gcn ? gcn->bias() : edge_conv->bias();
-
-        std::vector<feature_vec> pre_act(features.size(), feature_vec(out_dim, 0.0));
-        std::vector<feature_vec> post_act(features.size(), feature_vec(out_dim, 0.0));
-        if (gcn) {
-            // GCN: H' = A * H * W + b
-            for (std::size_t i = 0; i < features.size(); ++i) {
-                // Aggregate neighbor features using adjacency
-                feature_vec aggregated(in_dim, 0.0);
-                for (std::size_t k = adj.row_ptr[i]; k < adj.row_ptr[i + 1]; ++k) {
-                    std::size_t j = adj.col_ind[k];
-                    aggregated = vec_ops::operator+(aggregated, activations[l][j]);
-                }
-
-                // Linear transform
-                for (std::size_t m = 0; m < out_dim; ++m) {
-                    double sum = 0.0;
-                    for (std::size_t n = 0; n < in_dim; ++n) {
-                        sum += aggregated[n] * weights(n, m);
-                    }
-                    
-                    pre_act[i][m] = sum + bias[m];
-                }
-            }
-        } 
-        else {
-            // EdgeConv: aggregates activation((f_i - f_j) * W + b)
-            for (std::size_t i = 0; i < features.size(); ++i) {
-                for (std::size_t k = adj.row_ptr[i]; k < adj.row_ptr[i + 1]; ++k) {
-                    std::size_t j = adj.col_ind[k];
-                    feature_vec diff = vec_ops::operator-(activations[l][i], activations[l][j]);
-                    for (std::size_t m = 0; m < out_dim; ++m) {
-                        double sum = 0.0;
-                        for (std::size_t n = 0; n < in_dim; ++n) {
-                            sum += diff[n] * weights(n, m);
-                        }
-                  
-                        pre_act[i][m] += sum;
-                    }
-                }
-
-                for (std::size_t m = 0; m < out_dim; ++m) {
-                    pre_act[i][m] += bias[m];
-                }
-            }
-        }
-
-        pre_activations[l] = pre_act;
-
-        activation_type act_type = activation_type::MISH;
-        for (std::size_t i = 0; i < features.size(); ++i) {
-            switch (act_type) {
-                case activation_type::RELU:
-                    post_act[i] = vec_ops::relu(pre_act[i]);
-                    break;
-                case activation_type::MISH:
-                    post_act[i] = vec_ops::mish(pre_act[i]);
-                    break;
-                case activation_type::SIGMOID:
-                    post_act[i] = vec_ops::sigmoid(pre_act[i]);
-                    break;
-                case activation_type::GELU:
-                    post_act[i] = vec_ops::gelu(pre_act[i]);
-                    break;
-            }
-        }
-
-        activations[l + 1] = post_act;
+        activations[l + 1] = layers[l]->forward_cached(activations[l], adj, caches[l]);
     }
 
-    // Backward pass: compute gradients
-    // Output gradient: d_loss/d_output = 2 * (output - target) / N for MSE
-    std::vector<feature_vec> delta(features.size());
-    for (std::size_t i = 0; i < features.size(); ++i) {
-        delta[i] = vec_ops::scalar_multiply(
-            vec_ops::operator-(activations[num_layers][i], target[i]),
-            2.0 / static_cast<double>(features.size()));
+    // Output gradient from the configured loss function
+    std::vector<feature_vec> delta;
+    if (loss_) {
+        delta = loss_->gradient(activations[num_layers], target);
+    }
+    else {
+        // Fallback: MSE gradient
+        delta.resize(num_nodes);
+        for (std::size_t i = 0; i < num_nodes; ++i) {
+            delta[i] = vec_ops::scalar_multiply(
+                vec_ops::operator-(activations[num_layers][i], target[i]),
+                2.0 / static_cast<double>(num_nodes));
+        }
     }
 
-    std::size_t layer_idx = num_layers;
-
-    // Backpropagate through layers in reverse
+    // Backpropagate through layers in reverse; parameters are updated only
+    // after each layer computed its input gradient with pre-update weights
     for (int l = static_cast<int>(num_layers) - 1; l >= 0; --l) {
-        auto* gcn = dynamic_cast<gcn_layer*>(layers[l].get());
-        auto* edge_conv = dynamic_cast<edge_conv_layer*>(layers[l].get());
-        if (!gcn && !edge_conv) {
+        param_refs params = layers[l]->parameters();
+        if (!params.weights || !params.bias) {
             continue;
         }
 
-        --layer_idx;
-        std::size_t out_dim = gcn ? gcn->out_features() : edge_conv->out_features();
-        std::size_t in_dim = gcn ? gcn->in_features() : edge_conv->in_features();
-        matrix::dense_matrix& weights = gcn ? gcn->weights() : edge_conv->weights();
-        feature_vec& bias = gcn ? gcn->bias() : edge_conv->bias();
+        matrix::dense_matrix weight_grad(layers[l]->in_features(), layers[l]->out_features());
+        feature_vec bias_grad(layers[l]->out_features(), 0.0);
+        auto delta_prev = layers[l]->backward(delta, activations[l], adj, *caches[l],
+                                              weight_grad, bias_grad, l > 0);
 
-        // activation gradients
-        activation_type act_type = activation_type::MISH;
-        std::vector<feature_vec> delta_pre(features.size(), feature_vec(out_dim, 0.0));
-        for (std::size_t i = 0; i < features.size(); ++i) {
-            for (std::size_t m = 0; m < out_dim; ++m) {
-                double act_deriv = activation_derivative(pre_activations[l][i][m], act_type);
-                delta_pre[i][m] = delta[i][m] * act_deriv;
-            }
-        }
-
-        // weight and bias gradients
-        matrix::dense_matrix weight_grad(in_dim, out_dim);
-        feature_vec bias_grad(out_dim, 0.0);
-        if (gcn) {
-            // Weight gradient for GCN
-            for (std::size_t i = 0; i < features.size(); ++i) {
-                // Aggregate neighbor features
-                feature_vec aggregated(in_dim, 0.0);
-                for (std::size_t k = adj.row_ptr[i]; k < adj.row_ptr[i + 1]; ++k) {
-                    std::size_t j = adj.col_ind[k];
-                    aggregated = vec_ops::operator+(aggregated, activations[l][j]);
-                }
-
-                // Accumulate gradients
-                for (std::size_t n = 0; n < in_dim; ++n) {
-                    for (std::size_t m = 0; m < out_dim; ++m) {
-                        weight_grad(n, m) += aggregated[n] * delta_pre[i][m];
-                    }
-                }
-
-                // Bias gradient
-                for (std::size_t m = 0; m < out_dim; ++m) {
-                    bias_grad[m] += delta_pre[i][m];
-                }
-            }
-        } 
-        else {
-            // Weight gradient for EdgeConv
-            for (std::size_t i = 0; i < features.size(); ++i) {
-                for (std::size_t k = adj.row_ptr[i]; k < adj.row_ptr[i + 1]; ++k) {
-                    std::size_t j = adj.col_ind[k];
-                    feature_vec diff = vec_ops::operator-(activations[l][i], activations[l][j]);
-                    for (std::size_t n = 0; n < in_dim; ++n) {
-                        for (std::size_t m = 0; m < out_dim; ++m) {
-                            weight_grad(n, m) += diff[n] * delta_pre[i][m];
-                        }
-                    }
-                }
-
-                // Bias gradient
-                for (std::size_t m = 0; m < out_dim; ++m) {
-                    bias_grad[m] += delta_pre[i][m];
-                }
-            }
-        }
-
-        optimizer_->update(weights, bias, weight_grad, bias_grad, layer_idx);
-
-        // Compute delta for previous layer (if not first layer)
+        optimizer_->update(*params.weights, *params.bias, weight_grad, bias_grad,
+                           static_cast<std::size_t>(l));
         if (l > 0) {
-            std::vector<feature_vec> delta_prev(features.size(), feature_vec(in_dim, 0.0));
-            if (gcn) {
-                // Backprop through GCN
-                for (std::size_t i = 0; i < features.size(); ++i) {
-                    for (std::size_t n = 0; n < in_dim; ++n) {
-                        double sum = 0.0;
-                        for (std::size_t m = 0; m < out_dim; ++m) {
-                            sum += delta_pre[i][m] * weights(n, m);
-                        }
-                        // Aggregate to neighbors
-                        for (std::size_t k = adj.row_ptr[i]; k < adj.row_ptr[i + 1]; ++k) {
-                            std::size_t j = adj.col_ind[k];
-                            delta_prev[j][n] += sum;
-                        }
-                    }
-                }
-            } 
-            else {
-                // Backprop through EdgeConv
-                for (std::size_t i = 0; i < features.size(); ++i) {
-                    for (std::size_t n = 0; n < in_dim; ++n) {
-                        double sum = 0.0;
-                        for (std::size_t m = 0; m < out_dim; ++m) {
-                            sum += delta_pre[i][m] * weights(n, m);
-                        }
-            
-                        delta_prev[i][n] += sum * static_cast<double>(adj.row_ptr[i + 1] - adj.row_ptr[i]);
-                    }
-                }
-            }
-            
-            delta = delta_prev;
+            delta = std::move(delta_prev);
         }
     }
 }
