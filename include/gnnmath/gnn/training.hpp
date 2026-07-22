@@ -120,12 +120,6 @@ public:
     }
 
 private:
-    /// @brief Computes activation function derivative.
-    /// @param x Pre-activation value.
-    /// @param act_type Activation type.
-    /// @return Derivative value.
-    double activation_derivative(double x, activation_type act_type) const;
-
     /// @brief Internal initialization shared by constructors.
     void init(double learning_rate, optimizer_type opt_type, double weight_decay);
 
