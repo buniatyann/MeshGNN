@@ -48,6 +48,12 @@ public:
     /// @brief Returns raw data.
     const std::vector<scalar_t>& data() const { return data_; }
 
+    /// @brief Unchecked raw pointer to the row-major storage (hot loops).
+    const scalar_t* raw() const { return data_.data(); }
+
+    /// @brief Unchecked mutable raw pointer to the row-major storage (hot loops).
+    scalar_t* raw() { return data_.data(); }
+
 private:
     std::vector<scalar_t> data_; ///< Flat storage (row-major).
     std::size_t rows_, cols_;    ///< Dimensions.
