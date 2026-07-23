@@ -62,14 +62,20 @@ vector matrix_vector_multiply(const dense_matrix& matrix, const vector& vec) {
     }
 
     vector ans(matrix.rows(), 0.0);
+    const scalar_t* a = matrix.raw();
+    const std::size_t cols = matrix.cols();
     for (std::size_t i = 0; i < matrix.rows(); ++i) {
-        for (std::size_t j = 0; j < matrix.cols(); ++j) {
-            ans[i] += matrix(i, j) * vec[j];
+        const scalar_t* row = a + i * cols;
+        double sum = 0.0;
+        for (std::size_t j = 0; j < cols; ++j) {
+            sum += row[j] * vec[j];
         }
 
-        if (!std::isfinite(ans[i])) {
+        if (!std::isfinite(sum)) {
             throw std::runtime_error("matrix_vector_multiply: non-finite result");
         }
+
+        ans[i] = sum;
     }
 
     return ans;
@@ -83,19 +89,26 @@ dense_matrix operator*(const dense_matrix& A, const dense_matrix& B) {
         throw std::runtime_error("matrix_multiply: dimension mismatch");
     }
 
-    dense_matrix C(A.rows(), B.cols());
-    for (std::size_t i = 0; i < A.rows(); ++i) {
-        for (std::size_t j = 0; j < B.cols(); ++j) {
-            double sum = 0.0;
-            for (std::size_t k = 0; k < A.cols(); ++k) {
-                sum += A(i, k) * B(k, j);
+    const std::size_t n = A.rows(), k_dim = A.cols(), m = B.cols();
+    dense_matrix C(n, m);
+    const scalar_t* a = A.raw();
+    const scalar_t* b = B.raw();
+    scalar_t* c = C.raw();
+    // i-k-j order: both B and C rows are traversed contiguously
+    for (std::size_t i = 0; i < n; ++i) {
+        scalar_t* c_row = c + i * m;
+        for (std::size_t k = 0; k < k_dim; ++k) {
+            double a_ik = a[i * k_dim + k];
+            const scalar_t* b_row = b + k * m;
+            for (std::size_t j = 0; j < m; ++j) {
+                c_row[j] += a_ik * b_row[j];
             }
+        }
 
-            if (!std::isfinite(sum)) {
+        for (std::size_t j = 0; j < m; ++j) {
+            if (!std::isfinite(c_row[j])) {
                 throw std::runtime_error("matrix_multiply: non-finite result");
             }
-
-            C(i, j) = sum;
         }
     }
 
@@ -108,9 +121,11 @@ dense_matrix transpose(const dense_matrix& A) {
     }
 
     dense_matrix B(A.cols(), A.rows());
+    const scalar_t* a = A.raw();
+    scalar_t* b = B.raw();
     for (std::size_t i = 0; i < A.rows(); ++i) {
         for (std::size_t j = 0; j < A.cols(); ++j) {
-            B(j, i) = A(i, j);
+            b[j * A.rows() + i] = a[i * A.cols() + j];
         }
     }
 
@@ -123,12 +138,17 @@ dense_matrix operator+(const dense_matrix& A, const dense_matrix& B) {
     }
 
     dense_matrix C(A.rows(), A.cols());
-    for (std::size_t i = 0; i < A.rows(); ++i) {
-        for (std::size_t j = 0; j < A.cols(); ++j) {
-            C(i, j) = A(i, j) + B(i, j);
-            if (!std::isfinite(C(i, j))) {
-                throw std::runtime_error("operator+: non-finite result");
-            }
+    const scalar_t* a = A.raw();
+    const scalar_t* b = B.raw();
+    scalar_t* c = C.raw();
+    const std::size_t total = A.rows() * A.cols();
+    for (std::size_t i = 0; i < total; ++i) {
+        c[i] = a[i] + b[i];
+    }
+
+    for (std::size_t i = 0; i < total; ++i) {
+        if (!std::isfinite(c[i])) {
+            throw std::runtime_error("operator+: non-finite result");
         }
     }
 
@@ -140,12 +160,16 @@ dense_matrix& operator+=(dense_matrix& A, const dense_matrix& B) {
         throw std::runtime_error("operator+=: dimension mismatch");
     }
 
-    for (std::size_t i = 0; i < A.rows(); ++i) {
-        for (std::size_t j = 0; j < A.cols(); ++j) {
-            A(i, j) += B(i, j);
-            if (!std::isfinite(A(i, j))) {
-                throw std::runtime_error("operator+=: non-finite result");
-            }
+    scalar_t* a = A.raw();
+    const scalar_t* b = B.raw();
+    const std::size_t total = A.rows() * A.cols();
+    for (std::size_t i = 0; i < total; ++i) {
+        a[i] += b[i];
+    }
+
+    for (std::size_t i = 0; i < total; ++i) {
+        if (!std::isfinite(a[i])) {
+            throw std::runtime_error("operator+=: non-finite result");
         }
     }
 
@@ -158,12 +182,17 @@ dense_matrix operator-(const dense_matrix& A, const dense_matrix& B) {
     }
 
     dense_matrix C(A.rows(), A.cols());
-    for (std::size_t i = 0; i < A.rows(); ++i) {
-        for (std::size_t j = 0; j < A.cols(); ++j) {
-            C(i, j) = A(i, j) - B(i, j);
-            if (!std::isfinite(C(i, j))) {
-                throw std::runtime_error("operator-: non-finite result");
-            }
+    const scalar_t* a = A.raw();
+    const scalar_t* b = B.raw();
+    scalar_t* c = C.raw();
+    const std::size_t total = A.rows() * A.cols();
+    for (std::size_t i = 0; i < total; ++i) {
+        c[i] = a[i] - b[i];
+    }
+
+    for (std::size_t i = 0; i < total; ++i) {
+        if (!std::isfinite(c[i])) {
+            throw std::runtime_error("operator-: non-finite result");
         }
     }
 
@@ -175,12 +204,16 @@ dense_matrix& operator-=(dense_matrix& A, const dense_matrix& B) {
         throw std::runtime_error("operator-=: dimension mismatch");
     }
 
-    for (std::size_t i = 0; i < A.rows(); ++i) {
-        for (std::size_t j = 0; j < A.cols(); ++j) {
-            A(i, j) -= B(i, j);
-            if (!std::isfinite(A(i, j))) {
-                throw std::runtime_error("operator-=: non-finite result");
-            }
+    scalar_t* a = A.raw();
+    const scalar_t* b = B.raw();
+    const std::size_t total = A.rows() * A.cols();
+    for (std::size_t i = 0; i < total; ++i) {
+        a[i] -= b[i];
+    }
+
+    for (std::size_t i = 0; i < total; ++i) {
+        if (!std::isfinite(a[i])) {
+            throw std::runtime_error("operator-=: non-finite result");
         }
     }
 
@@ -206,12 +239,17 @@ dense_matrix elementwise_multiply(const dense_matrix& A, const dense_matrix& B) 
     }
 
     dense_matrix C(A.rows(), A.cols());
-    for (std::size_t i = 0; i < A.rows(); ++i) {
-        for (std::size_t j = 0; j < A.cols(); ++j) {
-            C(i, j) = A(i, j) * B(i, j);
-            if (!std::isfinite(C(i, j))) {
-                throw std::runtime_error("elementwise_multiply: non-finite result");
-            }
+    const scalar_t* a = A.raw();
+    const scalar_t* b = B.raw();
+    scalar_t* c = C.raw();
+    const std::size_t total = A.rows() * A.cols();
+    for (std::size_t i = 0; i < total; ++i) {
+        c[i] = a[i] * b[i];
+    }
+
+    for (std::size_t i = 0; i < total; ++i) {
+        if (!std::isfinite(c[i])) {
+            throw std::runtime_error("elementwise_multiply: non-finite result");
         }
     }
 
@@ -224,11 +262,10 @@ double frobenius_norm(const dense_matrix& A) {
     }
 
     double sum = 0.0;
-    for (std::size_t i = 0; i < A.rows(); ++i) {
-        for (std::size_t j = 0; j < A.cols(); ++j) {
-            double x = A(i, j);
-            sum += x * x;
-        }
+    const scalar_t* a = A.raw();
+    const std::size_t total = A.rows() * A.cols();
+    for (std::size_t i = 0; i < total; ++i) {
+        sum += a[i] * a[i];
     }
 
     if (!std::isfinite(sum)) {
