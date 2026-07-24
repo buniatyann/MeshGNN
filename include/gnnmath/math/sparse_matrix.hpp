@@ -119,6 +119,13 @@ sparse_matrix laplacian_matrix(const sparse_matrix& A);
 /// @return Normalized Laplacian.
 sparse_matrix normalized_laplacian_matrix(const sparse_matrix& A);
 
+/// @brief GCN normalization: D^(-1/2) * (A + I) * D^(-1/2), where D is the
+/// degree matrix of A + I (Kipf-Welling self-loops + symmetric normalization).
+/// @param A Adjacency matrix (square).
+/// @return Normalized adjacency matrix.
+/// @throws std::runtime_error If A is empty or non-square.
+sparse_matrix normalized_adjacency(const sparse_matrix& A);
+
 /// @brief Validates edge list.
 /// @param edges List of vertex pairs.
 /// @param num_vertices Number of vertices.
