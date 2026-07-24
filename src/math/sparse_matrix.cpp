@@ -72,6 +72,16 @@ void sparse_matrix::validate() const {
             throw std::runtime_error("sparse_matrix: row_ptr not non-decreasing");
         }
     }
+
+    // Column indices must be strictly increasing within each row; the
+    // merge-based operators (+, -) and is_symmetric rely on this ordering
+    for (std::size_t i = 0; i < rows; ++i) {
+        for (std::size_t j = row_ptr[i] + 1; j < row_ptr[i + 1]; ++j) {
+            if (col_ind[j] <= col_ind[j - 1]) {
+                throw std::runtime_error("sparse_matrix: columns not sorted within row");
+            }
+        }
+    }
 }
 
 vector sparse_matrix::multiply(const vector& x) const {
@@ -192,38 +202,37 @@ sparse_matrix sparse_matrix_multiply(const sparse_matrix& A, const sparse_matrix
 
     sparse_matrix C(A.rows, B.cols);
     C.row_ptr[0] = 0;
+    // Dense workspace SpGEMM: accumulate each row into a scratch array and
+    // track touched columns, so per-row work is linear in the flops instead of
+    // quadratic in the row's nonzeros.
+    std::vector<double> accum(B.cols, 0.0);
+    std::vector<char> marked(B.cols, 0);
+    std::vector<std::size_t> touched;
     for (std::size_t i = 0; i < A.rows; ++i) {
-        std::vector<std::pair<std::size_t, double>> row;
+        touched.clear();
         for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
             std::size_t k = A.col_ind[j];
             double val_a = A.vals[j];
             for (std::size_t m = B.row_ptr[k]; m < B.row_ptr[k + 1]; ++m) {
                 std::size_t col = B.col_ind[m];
-                double val_b = B.vals[m];
-                double prod = val_a * val_b;
-                if (std::abs(prod) > 1e-10) {
-                    bool found = false;
-                    for (auto& [c, v] : row) {
-                        if (c == col) {
-                            v += prod;
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if (!found) {
-                        row.emplace_back(col, prod);
-                    }
+                if (!marked[col]) {
+                    marked[col] = 1;
+                    touched.push_back(col);
                 }
+
+                accum[col] += val_a * B.vals[m];
             }
         }
 
-        std::sort(row.begin(), row.end());
-        for (const auto& [col, val] : row) {
-            if (std::abs(val) > 1e-10) {
-                C.vals.push_back(val);
+        std::sort(touched.begin(), touched.end());
+        for (std::size_t col : touched) {
+            if (std::abs(accum[col]) > 1e-10) {
+                C.vals.push_back(accum[col]);
                 C.col_ind.push_back(col);
             }
+
+            accum[col] = 0.0;
+            marked[col] = 0;
         }
 
         C.row_ptr[i + 1] = C.vals.size();
@@ -330,7 +339,11 @@ vector compute_degrees(const sparse_matrix& A) {
 
     vector degrees(A.rows, 0.0);
     for (std::size_t i = 0; i < A.rows; ++i) {
-        degrees[i] = static_cast<double>(A.row_ptr[i + 1] - A.row_ptr[i]);
+        // Weighted degree: sum of the row's values (equals the neighbor count
+        // for a 0/1 adjacency matrix)
+        for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
+            degrees[i] += A.vals[j];
+        }
     }
 
     return degrees;
@@ -349,14 +362,31 @@ sparse_matrix laplacian_matrix(const sparse_matrix& A) {
     sparse_matrix L(A.rows, A.cols);
     L.row_ptr[0] = 0;
     for (std::size_t i = 0; i < A.rows; ++i) {
-        if (degrees[i] > 0) {
-            L.vals.push_back(degrees[i]);
-            L.col_ind.push_back(i);
+        // Emit entries in sorted column order, merging the diagonal (degree)
+        // into its proper position among the -A entries
+        bool diag_emitted = false;
+        for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
+            std::size_t col = A.col_ind[j];
+            if (!diag_emitted && col >= i) {
+                double diag = degrees[i] - (col == i ? A.vals[j] : 0.0);
+                if (std::abs(diag) > 1e-10) {
+                    L.vals.push_back(diag);
+                    L.col_ind.push_back(i);
+                }
+
+                diag_emitted = true;
+                if (col == i) {
+                    continue;
+                }
+            }
+
+            L.vals.push_back(-A.vals[j]);
+            L.col_ind.push_back(col);
         }
 
-        for (std::size_t j = A.row_ptr[i]; j < A.row_ptr[i + 1]; ++j) {
-            L.vals.push_back(-A.vals[j]);
-            L.col_ind.push_back(A.col_ind[j]);
+        if (!diag_emitted && std::abs(degrees[i]) > 1e-10) {
+            L.vals.push_back(degrees[i]);
+            L.col_ind.push_back(i);
         }
 
         L.row_ptr[i + 1] = L.vals.size();
@@ -403,6 +433,33 @@ sparse_matrix normalized_laplacian_matrix(const sparse_matrix& A) {
 
     norm_L.validate();
     return norm_L;
+}
+
+sparse_matrix normalized_adjacency(const sparse_matrix& A) {
+    if (A.rows == 0 || A.cols == 0) {
+        throw std::runtime_error("normalized_adjacency: empty matrix");
+    }
+    if (A.rows != A.cols) {
+        throw std::runtime_error("normalized_adjacency: matrix must be square");
+    }
+
+    // A + I (merge-based operator+ keeps sorted CSR), then scale each entry
+    // (i, j) by 1 / sqrt(deg_i * deg_j) with degrees of A + I
+    sparse_matrix ai = A + Identity(A.rows);
+    vector degrees = compute_degrees(ai);
+    for (std::size_t i = 0; i < ai.rows; ++i) {
+        for (std::size_t j = ai.row_ptr[i]; j < ai.row_ptr[i + 1]; ++j) {
+            double d = degrees[i] * degrees[ai.col_ind[j]];
+            if (d <= 0.0) {
+                throw std::runtime_error("normalized_adjacency: non-positive degree");
+            }
+
+            ai.vals[j] /= std::sqrt(d);
+        }
+    }
+
+    ai.validate();
+    return ai;
 }
 
 bool validate(const std::vector<std::pair<std::size_t, std::size_t>>& edges, std::size_t num_vertices) {
