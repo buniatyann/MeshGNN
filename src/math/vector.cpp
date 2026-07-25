@@ -1,7 +1,10 @@
+// All operations here run on per-node feature vectors (dimension 2-64 in
+// practice), where parallel-execution dispatch costs far more than the work
+// itself — everything is deliberately sequential.
 #include <gnnmath/math/vector.hpp>
 #include <cmath>
 #include <algorithm>
-#include <execution>
+#include <numeric>
 
 namespace gnnmath {
 namespace vector {
@@ -12,7 +15,7 @@ namespace vector {
         }
         
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), b.begin(), ans.begin(),
+        std::transform(a.begin(), a.end(), b.begin(), ans.begin(),
                        [](double x, double y) { return x + y; });
         
         return ans;
@@ -24,7 +27,7 @@ namespace vector {
                                     " and " + std::to_string(b.size()) + " do not match");
         }
         
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), b.begin(), a.begin(),
+        std::transform(a.begin(), a.end(), b.begin(), a.begin(),
                        [](double x, double y) { return x + y; });
         
         return a;
@@ -37,7 +40,7 @@ namespace vector {
         }
         
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), b.begin(), ans.begin(),
+        std::transform(a.begin(), a.end(), b.begin(), ans.begin(),
                        [](double x, double y) { return x - y; });
         
         return ans;
@@ -49,7 +52,7 @@ namespace vector {
                                     " and " + std::to_string(b.size()) + " do not match");
         }
         
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), b.begin(), a.begin(),
+        std::transform(a.begin(), a.end(), b.begin(), a.begin(),
                        [](double x, double y) { return x - y; });
         
         return a;
@@ -57,7 +60,7 @@ namespace vector {
 
     vector scalar_multiply(const vector& a, double b) {
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
+        std::transform(a.begin(), a.end(), ans.begin(),
                        [b](double x) { return x * b; });
         
         return ans;
@@ -88,7 +91,7 @@ namespace vector {
 
     vector relu(const vector& a) {
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
+        std::transform(a.begin(), a.end(), ans.begin(),
                        [](double x) { return std::max(0.0, x); });
         
         return ans;
@@ -96,7 +99,7 @@ namespace vector {
 
     vector sigmoid(const vector& a) {
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
+        std::transform(a.begin(), a.end(), ans.begin(),
                        [](double x) {
                            // Clamp x to avoid overflow and ensure result stays strictly in (0, 1)
                            // The threshold is chosen so that the computation doesn't round to 0 or 1
@@ -121,7 +124,7 @@ namespace vector {
 
     vector mish(const vector& a) {
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
+        std::transform(a.begin(), a.end(), ans.begin(),
                        [](double x) { return x * std::tanh(std::log1p(std::exp(std::min(x, 700.0)))); });
         
         return ans;
@@ -132,17 +135,15 @@ namespace vector {
             throw std::runtime_error("Softmax: input vector is empty");
         }
         vector ans(a.size());
-        // Compute exp(x) for each element, clamping to avoid overflow
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
-                       [](double x) { return std::exp(std::min(x, 700.0)); });
-        // Compute sum of exp(x)
+        // Subtract the max before exponentiating: exp never overflows and the
+        // sum is always >= 1, so relative magnitudes are preserved exactly
+        double max_val = *std::max_element(a.begin(), a.end());
+        std::transform(a.begin(), a.end(), ans.begin(),
+                       [max_val](double x) { return std::exp(x - max_val); });
+        // Compute sum of exp(x - max)
         double sum = std::accumulate(ans.begin(), ans.end(), 0.0);
-        constexpr double epsilon = 1e-10;
-        if (sum < epsilon) {
-            throw std::runtime_error("Softmax: sum of exponentials is too small");
-        }
         
-        std::transform(std::execution::par_unseq, ans.begin(), ans.end(), ans.begin(),
+        std::transform(ans.begin(), ans.end(), ans.begin(),
                        [sum](double x) { return x / sum; });
         
         return ans;
@@ -150,7 +151,7 @@ namespace vector {
 
     vector softplus(const vector& a) {
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
+        std::transform(a.begin(), a.end(), ans.begin(),
                        [](double x) { return std::log1p(std::exp(std::min(x, 700.0))); });
         
         return ans;
@@ -158,7 +159,7 @@ namespace vector {
 
     vector gelu(const vector& a) {
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
+        std::transform(a.begin(), a.end(), ans.begin(),
                        [](double x) {
                            // Approximate GELU: x * 0.5 * (1 + erf(x / sqrt(2)))
                            constexpr double sqrt_2 = 1.4142135623730951;
@@ -170,7 +171,7 @@ namespace vector {
 
     vector silu(const vector& a) {
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
+        std::transform(a.begin(), a.end(), ans.begin(),
                        [](double x) { return x / (1.0 + std::exp(-std::min(x, 700.0))); });
         
         return ans;
@@ -178,7 +179,7 @@ namespace vector {
 
     vector softsign(const vector& a) {
         vector ans(a.size());
-        std::transform(std::execution::par_unseq, a.begin(), a.end(), ans.begin(),
+        std::transform(a.begin(), a.end(), ans.begin(),
                        [](double x) { return x / (1.0 + std::abs(x)); });
         
         return ans;
