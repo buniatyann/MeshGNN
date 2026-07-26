@@ -1,7 +1,7 @@
 #include <gnnmath/graph.hpp>
 #include <algorithm>
-#include <execution>
 #include <numeric>
+#include <unordered_set>
 
 namespace gnnmath {
 namespace graph {
@@ -27,12 +27,26 @@ graph::graph(std::size_t num_vertices,
         throw std::runtime_error("graph constructor: edge_features size mismatch");
     }
     
+    // Reject self-loops and duplicate edges: edges are index-aligned with
+    // edge_features, so silently deduplicating would desynchronize them, and
+    // duplicates produce invalid CSR matrices downstream.
+    std::unordered_set<std::size_t> seen;
+    seen.reserve(edges.size());
     for (const auto& [u, v] : edges) {
         if (u >= num_vertices || v >= num_vertices) {
             throw std::runtime_error("graph constructor: invalid vertex index");
         }
+        if (u == v) {
+            throw std::runtime_error("graph constructor: self-loop at vertex " + std::to_string(u));
+        }
+
+        std::size_t key = std::min(u, v) * num_vertices + std::max(u, v);
+        if (!seen.insert(key).second) {
+            throw std::runtime_error("graph constructor: duplicate edge (" +
+                                     std::to_string(u) + ", " + std::to_string(v) + ")");
+        }
     }
-    
+
     if (!node_features.empty() && !std::all_of(node_features.begin(), node_features.end(),
         [&](const auto& f) { return f.size() == node_features[0].size(); })) {
         throw std::runtime_error("graph constructor: inconsistent node feature dimensions");
@@ -57,12 +71,23 @@ void validate(const graph& graph) {
         throw std::runtime_error("validate: edge_features size mismatch");
     }
     
+    std::unordered_set<std::size_t> seen;
+    seen.reserve(graph.edges.size());
     for (const auto& [u, v] : graph.edges) {
         if (u >= graph.num_vertices || v >= graph.num_vertices) {
             throw std::runtime_error("validate: invalid vertex index");
         }
+        if (u == v) {
+            throw std::runtime_error("validate: self-loop at vertex " + std::to_string(u));
+        }
+
+        std::size_t key = std::min(u, v) * graph.num_vertices + std::max(u, v);
+        if (!seen.insert(key).second) {
+            throw std::runtime_error("validate: duplicate edge (" +
+                                     std::to_string(u) + ", " + std::to_string(v) + ")");
+        }
     }
-    
+
     if (!graph.node_features.empty() && !std::all_of(graph.node_features.begin(), graph.node_features.end(),
         [&](const auto& f) { return f.size() == graph.node_features[0].size(); })) {
         throw std::runtime_error("validate: inconsistent node feature dimensions");
@@ -98,16 +123,17 @@ sparse_matrix to_adjacency_matrix(const graph& graph) {
     }
     
     for (auto& row : rows) {
-        std::sort(std::execution::par_unseq, row.begin(), row.end(),
+        // Mesh rows have only a handful of entries; parallel sort is overhead
+        std::sort(row.begin(), row.end(),
                   [](const auto& a, const auto& b) { return a.first < b.first; });
         for (const auto& [col, val] : row) {
             values.push_back(val);
             col_indices.push_back(col);
         }
-    
+
         row_ptr.push_back(values.size());
     }
-    
+
     return sparse_matrix(graph.num_vertices, graph.num_vertices,
                          std::move(values), std::move(col_indices), std::move(row_ptr));
 }
@@ -159,8 +185,13 @@ feature_vector aggregate_features(
         node_features.empty() ? vector() : vector(node_features[0].size(), 0.0));
     
     for (std::size_t v = 0; v < graph.num_vertices; ++v) {
-        const auto& neighbors = graph.adjacency.at(v);
-        if (neighbors.empty()) continue;
+        // Isolated vertices have no adjacency entry
+        auto it = graph.adjacency.find(v);
+        if (it == graph.adjacency.end() || it->second.empty()) {
+            continue;
+        }
+
+        const auto& neighbors = it->second;
         
         if (mode == "sum" || mode == "mean") {
             for (const auto& [u, _] : neighbors) {
@@ -252,7 +283,7 @@ sparse_matrix laplacian_matrix(const graph& graph) {
     }
     
     for (auto& row : rows) {
-        std::sort(std::execution::par_unseq, row.begin(), row.end(),
+        std::sort(row.begin(), row.end(),
                   [](const auto& a, const auto& b) { return a.first < b.first; });
         for (const auto& [col, val] : row) {
             values.push_back(val);
