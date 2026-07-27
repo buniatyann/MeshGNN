@@ -3,7 +3,6 @@
 #include <gnnmath/core/random.hpp>
 #include <gnnmath/geometry/feature_extraction.hpp>
 #include <vector>
-#include <map>
 #include <stdexcept>
 #include <cmath>
 #include <execution>
@@ -17,23 +16,28 @@ std::vector<scalar_t> compute_gaussian_curvature(const mesh& m) {
 
     // Vertex -> incident face indices
     std::vector<std::vector<index_t>> vertex_faces(m.n_vertices());
-    // Face count per undirected edge, to detect boundary vertices
-    std::map<std::pair<index_t, index_t>, index_t> edge_face_count;
+    // Face count per edge (indexed via the mesh's own edge map), to detect
+    // boundary vertices
+    std::vector<index_t> edge_face_count(m.n_edges(), 0);
+    const auto& edge_map = m.edge_ind_map();
     for (index_t fi = 0; fi < m.n_faces(); ++fi) {
         const auto& f = m.faces()[fi];
         for (index_t c = 0; c < 3; ++c) {
             vertex_faces[f[c]].push_back(fi);
             index_t a = f[c], b = f[(c + 1) % 3];
-            ++edge_face_count[{std::min(a, b), std::max(a, b)}];
+            auto it = edge_map.find({std::min(a, b), std::max(a, b)});
+            if (it != edge_map.end()) {
+                ++edge_face_count[it->second];
+            }
         }
     }
 
     // A vertex is on the boundary if any incident edge borders exactly one face
     std::vector<bool> boundary(m.n_vertices(), false);
-    for (const auto& [e, count] : edge_face_count) {
-        if (count == 1) {
-            boundary[e.first] = true;
-            boundary[e.second] = true;
+    for (index_t e = 0; e < m.n_edges(); ++e) {
+        if (edge_face_count[e] == 1) {
+            boundary[m.edges()[e].first] = true;
+            boundary[m.edges()[e].second] = true;
         }
     }
 
