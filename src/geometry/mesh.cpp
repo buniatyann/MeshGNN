@@ -1,12 +1,12 @@
 #include <gnnmath/geometry/mesh.hpp>
 #include <gnnmath/geometry/obj_loader.hpp>
+#include <gnnmath/geometry/mesh_processor.hpp>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <execution>
 #include <cmath>
-#include <set>
-#include <queue>
+#include <numeric>
 
 namespace gnnmath {
 namespace mesh {
@@ -105,26 +105,15 @@ void mesh::load_from_obj_data(const obj_data& data) {
         }
     }
 
-    // Sort and deduplicate adjacency lists
+    // Sort and deduplicate adjacency lists (vertex degrees are small; a
+    // parallel sort would be pure dispatch overhead)
     for (auto& [v, neighbors] : adjacency_) {
-        if (neighbors.size() > 100) {
-            std::sort(std::execution::par_unseq, neighbors.begin(), neighbors.end());
-        } 
-        else {
-            std::sort(neighbors.begin(), neighbors.end());
-        }
-        
+        std::sort(neighbors.begin(), neighbors.end());
         neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
     }
 
     for (auto& [v, edge_list] : incident_edges_) {
-        if (edge_list.size() > 100) {
-            std::sort(std::execution::par_unseq, edge_list.begin(), edge_list.end());
-        } 
-        else {
-            std::sort(edge_list.begin(), edge_list.end());
-        }
-        
+        std::sort(edge_list.begin(), edge_list.end());
         edge_list.erase(std::unique(edge_list.begin(), edge_list.end()), edge_list.end());
     }
 
@@ -251,17 +240,14 @@ std::vector<gnnmath::vector::vector> mesh::compute_normals() const {
         normals[v2] = gnnmath::vector::operator+(normals[v2], normal);
     }
     
-    std::transform(std::execution::par_unseq, normals.begin(), normals.end(), normals.begin(),
-                   [](auto& n) {
-                       double norm = gnnmath::vector::euclidean_norm(n);
-                       if (norm > 1e-10) {
-                           n[0] /= norm;
-                           n[1] /= norm;
-                           n[2] /= norm;
-                       }
-    
-                       return n;
-                   });
+    for (auto& n : normals) {
+        double norm = gnnmath::vector::euclidean_norm(n);
+        if (norm > 1e-10) {
+            n[0] /= norm;
+            n[1] /= norm;
+            n[2] /= norm;
+        }
+    }
 
     return normals;
 }
@@ -278,8 +264,10 @@ std::vector<std::size_t> mesh::sample_vertices(std::size_t n) const {
     sample.reserve(n);
 
     for (std::size_t i = 0; i < n; ++i) {
+        // Draw from [0, size) and truncate so every index is equally likely
         std::size_t idx = static_cast<std::size_t>(
-            random::uniform(0, static_cast<scalar_t>(indices.size() - 1)));
+            random::uniform(0, static_cast<scalar_t>(indices.size())));
+        idx = std::min(idx, indices.size() - 1);
         sample.push_back(indices[idx]);
         indices[idx] = indices.back();
         indices.pop_back();
@@ -294,7 +282,6 @@ void mesh::add_vertex_noise(scalar_t scale) {
         throw std::invalid_argument("add_vertex_noise: scale must be non-negative");
     }
 
-    random::seed(42);
     for (auto& v : vertices_) {
         auto noise = random::uniform_vector(3, -scale, scale);
         v = gnnmath::vector::operator+(v, noise);
@@ -309,148 +296,10 @@ void mesh::add_vertex_noise(scalar_t scale) {
 }
 
 void mesh::simplify_edge_collapse(std::size_t target_vertices) {
-    validate();
-    if (target_vertices > n_vertices()) {
-        throw std::invalid_argument("simplify_edge_collapse: target exceeds current vertices");
-    }
-
-    using cost_t = std::pair<double, std::size_t>;
-    std::priority_queue<cost_t, std::vector<cost_t>, std::greater<cost_t>> pq;
-    for (std::size_t i = 0; i < edges_.size(); ++i) {
-        const auto& [u, v] = edges_[i];
-        double cost = gnnmath::vector::euclidean_norm(
-            gnnmath::vector::operator-(vertices_[u], vertices_[v]));
-        pq.push({cost, i});
-    }
-
-    std::vector<bool> valid_vertices(n_vertices(), true);
-    std::vector<bool> valid_edges(n_edges(), true);
-    std::size_t current_vertices = n_vertices();
-    while (current_vertices > target_vertices && !pq.empty()) {
-        auto [cost, edge_idx] = pq.top();
-        pq.pop();
-        if (!valid_edges[edge_idx]) {
-            continue;
-        }
-
-        auto [u, v] = edges_[edge_idx];
-        if (!valid_vertices[u] || !valid_vertices[v]) {
-            continue;
-        }
-
-        valid_vertices[u] = false;
-        --current_vertices;
-        valid_edges[edge_idx] = false;
-        vertices_[v] = gnnmath::vector::scalar_multiply(
-            gnnmath::vector::operator+(vertices_[u], vertices_[v]), 0.5);
-        std::vector<face> new_faces;
-        for (const auto& f : faces_) {
-            face new_f = f;
-            if (f[0] == u) {
-                new_f[0] = v;
-            }
-            
-            if (f[1] == u) {
-                new_f[1] = v;
-            }
-            
-            if (f[2] == u) {
-                new_f[2] = v;
-            }
-            
-            if (new_f[0] != new_f[1] && new_f[1] != new_f[2] && new_f[2] != new_f[0]) {
-                new_faces.push_back(new_f);
-            }
-        }
-
-        faces_ = std::move(new_faces);
-        edges_.clear();
-        edge_index_map_.clear();
-        adjacency_.clear();
-        incident_edges_.clear();
-        for (const auto& [v0, v1, v2] : faces_) {
-            std::vector<std::pair<std::size_t, std::size_t>> face_edges = {
-                {std::min(v0, v1), std::max(v0, v1)},
-                {std::min(v1, v2), std::max(v1, v2)},
-                {std::min(v2, v0), std::max(v2, v0)}
-            };
-
-            for (const auto& [u2, v2] : face_edges) {
-                if (!edge_index_map_.count({u2, v2})) {
-                    std::size_t edge_idx = edges_.size();
-                    edges_.push_back({u2, v2});
-                    edge_index_map_[{u2, v2}] = edge_idx;
-                    adjacency_[u2].push_back(v2);
-                    adjacency_[v2].push_back(u2);
-                    incident_edges_[u2].push_back(edge_idx);
-                    incident_edges_[v2].push_back(edge_idx);
-                }
-            }
-        }
-
-        while (!pq.empty()) {
-            pq.pop();
-        }
-        
-        for (std::size_t i = 0; i < edges_.size(); ++i) {
-            if (!valid_edges[i]) {
-                continue;
-            }
-            
-            const auto& [u2, v2] = edges_[i];
-            if (!valid_vertices[u2] || !valid_vertices[v2]) {
-                valid_edges[i] = false;
-                continue;
-            }
-
-            double cost = gnnmath::vector::euclidean_norm(
-                gnnmath::vector::operator-(vertices_[u2], vertices_[v2]));
-            pq.push({cost, i});
-        }
-    }
-
-    std::vector<vertex> new_vertices;
-    std::vector<std::size_t> old_to_new(n_vertices(), 0);
-    std::size_t new_idx = 0;
-    for (std::size_t i = 0; i < n_vertices(); ++i) {
-        if (valid_vertices[i]) {
-            new_vertices.push_back(vertices_[i]);
-            old_to_new[i] = new_idx++;
-        }
-    }
-
-    vertices_ = std::move(new_vertices);
-    for (auto& f : faces_) {
-        f[0] = old_to_new[f[0]];
-        f[1] = old_to_new[f[1]];
-        f[2] = old_to_new[f[2]];
-    }
-
-    edges_.clear();
-    edge_index_map_.clear();
-    adjacency_.clear();
-    incident_edges_.clear();
-    for (const auto& [v0, v1, v2] : faces_) {
-        std::vector<std::pair<std::size_t, std::size_t>> face_edges = {
-            {std::min(v0, v1), std::max(v0, v1)},
-            {std::min(v1, v2), std::max(v1, v2)},
-            {std::min(v2, v0), std::max(v2, v0)}
-        };
-
-        for (const auto& [u2, v2] : face_edges) {
-            if (!edge_index_map_.count({u2, v2})) {
-                std::size_t edge_idx = edges_.size();
-                edges_.push_back({u2, v2});
-                edge_index_map_[{u2, v2}] = edge_idx;
-                adjacency_[u2].push_back(v2);
-                adjacency_[v2].push_back(u2);
-                incident_edges_[u2].push_back(edge_idx);
-                incident_edges_[v2].push_back(edge_idx);
-            }
-        }
-    }
-
-    validate();
+    // Delegates to the lazy-deletion implementation in mesh_processor
+    // (O(E log E) instead of rebuilding all edges per collapse). Collapse
+    // ordering may differ slightly from the old per-collapse-rebuild variant.
+    simplify_gnn_edge_collapse(*this, target_vertices, {});
 }
 
 void mesh::validate() const {
