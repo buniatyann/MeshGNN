@@ -1,10 +1,13 @@
 #include <gnnmath/geometry/obj_loader.hpp>
+#include <gnnmath/geometry/mesh.hpp>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <cmath>
 #include <cctype>
 #include <filesystem>
+#include <iomanip>
+#include <limits>
 
 namespace gnnmath {
 namespace mesh {
@@ -552,8 +555,19 @@ std::vector<std::array<face_vertex, 3>> obj_loader::triangulate_face(const polyg
 }
 
 std::vector<std::array<face_vertex, 3>> obj_loader::triangulate_fan(
-        const polygon_face& face, const obj_data& data) {
-    return triangulate_delaunay(face, data);
+        const polygon_face& face, const obj_data& /*data*/) {
+    // Simple fan triangulation around the first vertex
+    std::vector<std::array<face_vertex, 3>> triangles;
+    if (face.size() < 3) {
+        return triangles;
+    }
+
+    triangles.reserve(face.size() - 2);
+    for (std::size_t i = 1; i + 1 < face.size(); ++i) {
+        triangles.push_back({face[0], face[i], face[i + 1]});
+    }
+
+    return triangles;
 }
 
 namespace {
@@ -975,6 +989,43 @@ obj_data load_obj_file(const std::string& filename) {
 obj_data load_obj_file(const std::string& filename, const obj_load_options& options) {
     obj_loader loader(options);
     return loader.load(filename);
+}
+
+void save_obj(const mesh& m, const std::string& filename, bool write_normals) {
+    m.validate();
+
+    std::ofstream file(filename);
+    if (!file) {
+        throw std::runtime_error("save_obj: cannot open file for writing: " + filename);
+    }
+
+    file << std::setprecision(std::numeric_limits<scalar_t>::max_digits10);
+    for (const auto& v : m.vertices()) {
+        file << "v " << v[0] << ' ' << v[1] << ' ' << v[2] << '\n';
+    }
+
+    if (write_normals) {
+        // One normal per vertex, so the normal index equals the vertex index
+        auto normals = m.compute_normals();
+        for (const auto& n : normals) {
+            file << "vn " << n[0] << ' ' << n[1] << ' ' << n[2] << '\n';
+        }
+
+        for (const auto& [v0, v1, v2] : m.faces()) {
+            file << "f " << v0 + 1 << "//" << v0 + 1 << ' '
+                 << v1 + 1 << "//" << v1 + 1 << ' '
+                 << v2 + 1 << "//" << v2 + 1 << '\n';
+        }
+    }
+    else {
+        for (const auto& [v0, v1, v2] : m.faces()) {
+            file << "f " << v0 + 1 << ' ' << v1 + 1 << ' ' << v2 + 1 << '\n';
+        }
+    }
+
+    if (!file) {
+        throw std::runtime_error("save_obj: error writing to file: " + filename);
+    }
 }
 
 } // namespace mesh
