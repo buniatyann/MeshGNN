@@ -21,15 +21,23 @@ void adam_optimizer::update(matrix::dense_matrix& weights, feature_vec& bias,
     }
 
     adam_state& state = states_[layer_idx];
-    ++state.t;
 
-    // Initialize moments if needed
-    if (!state.m_weights.has_value()) {
+    // (Re)initialize moments on first use or when the layer's parameter shape
+    // changed since the last update — stale moments of a different shape would
+    // be indexed out of bounds below.
+    bool shape_mismatch = !state.m_weights.has_value() ||
+                          state.m_weights->rows() != weights.rows() ||
+                          state.m_weights->cols() != weights.cols() ||
+                          state.m_bias.size() != bias.size();
+    if (shape_mismatch) {
         state.m_weights = matrix::dense_matrix(weights.rows(), weights.cols());
         state.v_weights = matrix::dense_matrix(weights.rows(), weights.cols());
-        state.m_bias.resize(bias.size(), 0.0);
-        state.v_bias.resize(bias.size(), 0.0);
+        state.m_bias.assign(bias.size(), 0.0);
+        state.v_bias.assign(bias.size(), 0.0);
+        state.t = 0;
     }
+
+    ++state.t;
 
     // Bias correction factors
     double bias_correction1 = 1.0 - std::pow(beta1_, static_cast<double>(state.t));
