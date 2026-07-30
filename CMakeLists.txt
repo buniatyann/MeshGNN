@@ -36,6 +36,7 @@ set(MESHGNN_SOURCES
     src/graph.cpp
 
     # GNN module
+    src/gnn/layers/layer.cpp
     src/gnn/layers/gcn_layer.cpp
     src/gnn/layers/edge_conv_layer.cpp
     src/gnn/pipeline.cpp
@@ -74,6 +75,7 @@ if(MESHGNN_BUILD_TESTS)
             tests/test_vector.cpp
             tests/test_matrix.cpp
             tests/test_mesh.cpp
+            tests/test_graph.cpp
             tests/test_gnn.cpp
         )
         target_link_libraries(meshgnn_tests PRIVATE meshgnn GTest::gtest GTest::gtest_main)
