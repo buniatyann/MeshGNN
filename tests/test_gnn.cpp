@@ -7,6 +7,7 @@
 #include <gnnmath/math/dense_matrix.hpp>
 #include <gnnmath/math/sparse_matrix.hpp>
 #include <cmath>
+#include <fstream>
 
 using namespace gnnmath;
 using namespace gnnmath::gnn;
@@ -255,4 +256,110 @@ TEST_F(TrainerTest, SetLearningRate) {
 TEST_F(TrainerTest, WeightDecay) {
     trainer t(&p, 0.01, optimizer_type::SGD, 0.001);
     EXPECT_NO_THROW(t.train_step(features, adj, target));
+}
+
+TEST(AdamOptimizerTest, ShapeChangeReinitializesState) {
+    adam_optimizer opt(0.01);
+
+    // First update with a 2x3 layer at index 0
+    matrix::dense_matrix w1(2, 3);
+    vector::vector b1(3, 0.5);
+    matrix::dense_matrix gw1(2, 3);
+    vector::vector gb1(3, 0.1);
+    gw1(0, 0) = 1.0;
+    EXPECT_NO_THROW(opt.update(w1, b1, gw1, gb1, 0));
+
+    // Reuse the same layer index with a larger 4x5 layer: moments must be
+    // reallocated for the new shape, not indexed with the old one
+    matrix::dense_matrix w2(4, 5);
+    vector::vector b2(5, 0.5);
+    matrix::dense_matrix gw2(4, 5);
+    vector::vector gb2(5, 0.1);
+    gw2(3, 4) = 1.0;
+    EXPECT_NO_THROW(opt.update(w2, b2, gw2, gb2, 0));
+    EXPECT_TRUE(matrix::is_valid(w2));
+    for (double v : b2) {
+        EXPECT_TRUE(std::isfinite(v));
+    }
+
+    // And shrinking again must also be safe
+    matrix::dense_matrix w3(1, 2);
+    vector::vector b3(2, 0.5);
+    matrix::dense_matrix gw3(1, 2);
+    vector::vector gb3(2, 0.1);
+    EXPECT_NO_THROW(opt.update(w3, b3, gw3, gb3, 0));
+    EXPECT_TRUE(matrix::is_valid(w3));
+}
+
+TEST(PipelineSerializationTest, FormatV2RoundTrip) {
+    auto p = std::make_shared<pipeline>();
+    p->add_layer(std::make_unique<gcn_layer>(3, 4, activation_type::GELU));
+    p->add_layer(std::make_unique<edge_conv_layer>(4, 2, activation_type::SIGMOID));
+
+    std::string path = ::testing::TempDir() + "meshgnn_v2_roundtrip.bin";
+    p->save(path);
+
+    // Reconstruct from the file alone
+    pipeline p2 = pipeline::load_new(path);
+    ASSERT_EQ(p2.num_layers(), 2u);
+    EXPECT_EQ(p2.layers()[0]->kind(), layer_kind::gcn);
+    EXPECT_EQ(p2.layers()[0]->act(), activation_type::GELU);
+    EXPECT_EQ(p2.layers()[1]->kind(), layer_kind::edge_conv);
+    EXPECT_EQ(p2.layers()[1]->act(), activation_type::SIGMOID);
+    EXPECT_EQ(p2.layers()[0]->in_features(), 3u);
+    EXPECT_EQ(p2.layers()[1]->out_features(), 2u);
+
+    // Identical outputs
+    auto adj = matrix::build_adj_matrix(3, {{0, 1}, {1, 2}, {2, 0}});
+    std::vector<vector::vector> features = {
+        {1.0, 0.0, 0.5}, {0.0, 1.0, -0.5}, {1.0, 1.0, 0.0}
+    };
+    auto out1 = p->process(features, adj);
+    auto out2 = p2.process(features, adj);
+    ASSERT_EQ(out1.size(), out2.size());
+    for (std::size_t i = 0; i < out1.size(); ++i) {
+        for (std::size_t j = 0; j < out1[i].size(); ++j) {
+            EXPECT_NEAR(out1[i][j], out2[i][j], 1e-12);
+        }
+    }
+}
+
+TEST(PipelineSerializationTest, FormatV1BackCompat) {
+    // Hand-craft a v1 file: magic, version 1, one GCN layer 2x3
+    std::string path = ::testing::TempDir() + "meshgnn_v1_compat.bin";
+    {
+        std::ofstream f(path, std::ios::binary);
+        uint32_t magic = 0x4D475050, version = 1, num_layers = 1;
+        uint8_t type = 1;
+        uint32_t rows = 2, cols = 3, bias_size = 3;
+        f.write(reinterpret_cast<const char*>(&magic), 4);
+        f.write(reinterpret_cast<const char*>(&version), 4);
+        f.write(reinterpret_cast<const char*>(&num_layers), 4);
+        f.write(reinterpret_cast<const char*>(&type), 1);
+        f.write(reinterpret_cast<const char*>(&rows), 4);
+        f.write(reinterpret_cast<const char*>(&cols), 4);
+        for (int i = 0; i < 6; ++i) {
+            double v = 0.5 * (i + 1);
+            f.write(reinterpret_cast<const char*>(&v), 8);
+        }
+        f.write(reinterpret_cast<const char*>(&bias_size), 4);
+        for (int i = 0; i < 3; ++i) {
+            double v = -0.25 * (i + 1);
+            f.write(reinterpret_cast<const char*>(&v), 8);
+        }
+    }
+
+    // v1 into a matching prebuilt pipeline works
+    pipeline p;
+    p.add_layer(std::make_unique<gcn_layer>(2, 3));
+    EXPECT_NO_THROW(p.load(path));
+    auto* gcn = dynamic_cast<gcn_layer*>(p.layers()[0].get());
+    ASSERT_NE(gcn, nullptr);
+    EXPECT_DOUBLE_EQ(gcn->weights()(0, 0), 0.5);
+    EXPECT_DOUBLE_EQ(gcn->weights()(1, 2), 3.0);
+    EXPECT_DOUBLE_EQ(gcn->bias()[2], -0.75);
+
+    // v1 into an empty pipeline is rejected
+    pipeline empty;
+    EXPECT_THROW(empty.load(path), std::runtime_error);
 }
