@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include <gnnmath/geometry/mesh.hpp>
+#include <gnnmath/geometry/mesh_processor.hpp>
+#include <gnnmath/geometry/obj_loader.hpp>
 #include <cmath>
 
 using namespace gnnmath::mesh;
@@ -181,4 +183,67 @@ TEST_F(MeshSimplificationTest, SimplifyNoOp) {
     // Target equals current vertices - should be no-op
     simplify_gnn_edge_collapse(m, 4, {});
     EXPECT_EQ(m.n_vertices(), 4);
+}
+
+TEST(QuadricErrorTest, FlatGridInteriorEdgeZeroCost) {
+    // Flat 3x3 grid in the z = 0 plane: collapsing any edge introduces no
+    // geometric error, so the quadric cost must vanish
+    mesh m;
+    for (std::size_t r = 0; r < 3; ++r) {
+        for (std::size_t c = 0; c < 3; ++c) {
+            m.vertices().push_back({static_cast<double>(c), static_cast<double>(r), 0.0});
+        }
+    }
+    for (std::size_t r = 0; r < 2; ++r) {
+        for (std::size_t c = 0; c < 2; ++c) {
+            std::size_t i = r * 3 + c;
+            m.faces().push_back({i, i + 1, i + 3});
+            m.faces().push_back({i + 1, i + 4, i + 3});
+        }
+    }
+
+    // Interior edge (4 is the center vertex)
+    EXPECT_NEAR(compute_quadric_error(m, 4, 1), 0.0, 1e-12);
+    EXPECT_NEAR(compute_quadric_error(m, 4, 3), 0.0, 1e-12);
+}
+
+TEST_F(MeshSimplificationTest, QuadricErrorPositiveOnCurvedGeometry) {
+    // Tetrahedron edges are shared by non-coplanar faces: nonzero error
+    EXPECT_GT(compute_quadric_error(m, 0, 1), 0.0);
+}
+
+TEST_F(MeshSimplificationTest, MemberSimplifyDelegates) {
+    m.simplify_edge_collapse(3);
+    EXPECT_EQ(m.n_vertices(), 3);
+    EXPECT_TRUE(m.is_valid());
+    for (const auto& f : m.faces()) {
+        EXPECT_LT(f[0], m.n_vertices());
+        EXPECT_LT(f[1], m.n_vertices());
+        EXPECT_LT(f[2], m.n_vertices());
+    }
+}
+
+TEST_F(MeshSimplificationTest, SaveObjRoundTrip) {
+    std::string path = ::testing::TempDir() + "meshgnn_roundtrip.obj";
+    save_obj(m, path);
+
+    mesh m2;
+    m2.load_obj(path);
+    ASSERT_EQ(m2.n_vertices(), m.n_vertices());
+    ASSERT_EQ(m2.n_faces(), m.n_faces());
+    ASSERT_EQ(m2.n_edges(), m.n_edges());
+    for (std::size_t i = 0; i < m.n_vertices(); ++i) {
+        for (int c = 0; c < 3; ++c) {
+            EXPECT_NEAR(m2.vertices()[i][c], m.vertices()[i][c], 1e-12);
+        }
+    }
+
+    // With normals: the loader must parse the v//vn face format
+    std::string path_n = ::testing::TempDir() + "meshgnn_roundtrip_normals.obj";
+    save_obj(m, path_n, true);
+    mesh m3;
+    m3.load_obj(path_n);
+    EXPECT_EQ(m3.n_vertices(), m.n_vertices());
+    EXPECT_EQ(m3.n_faces(), m.n_faces());
+    EXPECT_TRUE(m3.has_file_normals());
 }
