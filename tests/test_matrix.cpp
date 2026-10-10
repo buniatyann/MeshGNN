@@ -179,3 +179,23 @@ TEST_F(SparseMatrixTest, SparseIdentity) {
     EXPECT_DOUBLE_EQ(result[1], 2.0);
     EXPECT_DOUBLE_EQ(result[2], 3.0);
 }
+
+TEST(NormalizedAdjacencyTest, RowSumsAndSymmetry) {
+    // 4-cycle: every vertex has degree 2, so with self-loops deg(A + I) = 3
+    // and every row of D^(-1/2) (A + I) D^(-1/2) sums to exactly 1
+    auto adj = build_adj_matrix(4, {{0, 1}, {1, 2}, {2, 3}, {3, 0}});
+    auto norm = normalized_adjacency(adj);
+
+    EXPECT_TRUE(is_symmetric(norm));
+    vector ones = {1.0, 1.0, 1.0, 1.0};
+    auto row_sums = norm.multiply(ones);
+    for (double s : row_sums) {
+        EXPECT_NEAR(s, 1.0, 1e-12);
+    }
+
+    // Diagonal entries are 1/deg = 1/3
+    auto dense = to_dense(norm);
+    for (std::size_t i = 0; i < 4; ++i) {
+        EXPECT_NEAR(dense(i, i), 1.0 / 3.0, 1e-12);
+    }
+}
